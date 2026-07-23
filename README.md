@@ -19,8 +19,9 @@ curl -fsSL https://raw.githubusercontent.com/hihilabs/loyd/main/install.sh | bas
 Puts a `loyd` command on your PATH that talks to the Tokyo7 ollama. Default `OLLAMA_URL`
 is Tokyo7 over tailscale (`localhost:11434`) so it works from any of your machines;
 override at install: `OLLAMA_URL=http://localhost:11434 LOYD_MODEL=cogito:8b ./install.sh`.
-(Private repo → `curl | bash` needs it public or a token; the installer clones via SSH by
-default, which works wherever your GitHub key does.)
+Machines **not** on tailscale (e.g. on the LAN) should set `OLLAMA_URL=http://localhost:11434`.
+Default clone is public HTTPS (no auth). For a private repo, set
+`LOYD_REPO=git@github.com:hihilabs/loyd.git` to clone via SSH.
 
 ## Run
 ```bash

@@ -9,14 +9,15 @@
 #                http://localhost:11434 on the LAN)
 #   LOYD_MODEL  (default qwen2.5-coder:7b)
 #   LOYD_HOME   (default ~/.loyd)      BIN_DIR (default ~/.local/bin)
-#   LOYD_REPO   (default git@github.com:hihilabs/loyd.git)
+#   LOYD_REPO   (default https://github.com/hihilabs/loyd.git — public HTTPS clone;
+#                set git@github.com:hihilabs/loyd.git to clone a private repo via SSH)
 set -euo pipefail
 
 LOYD_HOME="${LOYD_HOME:-$HOME/.loyd}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 LOYD_MODEL="${LOYD_MODEL:-qwen2.5-coder:7b}"
-LOYD_REPO="${LOYD_REPO:-git@github.com:hihilabs/loyd.git}"
+LOYD_REPO="${LOYD_REPO:-https://github.com/hihilabs/loyd.git}"
 
 say()  { printf '\033[36m▸ %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
