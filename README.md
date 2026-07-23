@@ -1,0 +1,42 @@
+# Loyd — local dev/ops assistant (v0.1)
+
+A small, model-agnostic tool-using agent for the Tokyo7 Unraid box (and, later, the
+hihilabs VPS). Runs on a local ollama model — `qwen2.5-coder:7b` by default — so it's
+private, free, and coexists with the cam workers.
+
+**Model note (from live testing):** qwen2.5-coder:7b reliably *chains tools and concludes*.
+Cogito 3B aced isolated single-tool calls but tends to *narrate* the plan instead of
+acting on multi-step/compound tasks — weaker orchestrator. Cogito 8B (native tool_calls,
+still fits VRAM) is the next one to A/B. Swap with `--model` / `OLLAMA_AI_MODEL`.
+
+## Run
+```bash
+python3 /mnt/user/appdata/loyd/cli.py "is the plex container running and how much disk is free?"
+# or interactive:
+python3 /mnt/user/appdata/loyd/cli.py
+# or via the launcher (alias it):
+alias loyd='/mnt/user/appdata/loyd/loyd'
+loyd "tail the last 20 lines of the docker log for camagent-worker-gpu0"
+```
+
+## Swap the brain (one flag / env var)
+```bash
+loyd --model cogito:8b "..."        # more reasoning, still fits VRAM
+OLLAMA_AI_MODEL=cogito:8b loyd ...
+```
+The harness is the same; only the backend model changes. Escalation to a bigger
+local model or cloud Claude for hard tasks is the intended growth path.
+
+## Design
+- `tools.py` — read-only tool schemas + implementations (`run_shell`, `read_file`,
+  `get_container_status`). `run_shell` refuses obviously-mutating commands (best-effort
+  guard, not a sandbox — v0.1 is read-only on a trusted box).
+- `loyd_core.py` — `LoydAgent`: the tool-loop. Normalizes native tool_calls (Cogito)
+  and text-JSON (qwen-coder), with validate-and-retry for small-model whiffs. No deps
+  (stdlib only). Importable by the worker's `ai_task` handler later ("both eventually").
+- `cli.py` — one-shot + interactive front-end with transparent tool-call display.
+
+## Status / roadmap
+- v0.1: read-only, CLI, Cogito 3B. **← you are here**
+- next: guarded write tools (edit files, restart containers) with confirm prompts;
+  VPS reach (ssh/deploy/log-read); wire the core into worker.py `ai_task`.
