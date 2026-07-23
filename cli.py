@@ -17,6 +17,7 @@ REPL slash commands:
 """
 import argparse
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -91,6 +92,28 @@ class Session:
         self.claude().run(q)
 
 
+def self_update():
+    """git pull the install dir (where this cli.py lives) and re-exec to load it.
+    No-op with a hint if the dir isn't a git checkout (e.g. installed via file copy)."""
+    home = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.isdir(os.path.join(home, ".git")):
+        print(f"{DIM}{home} isn't a git checkout — re-run install.sh to update.{RST}")
+        return
+    print(f"{DIM}updating {home} …{RST}")
+    p = subprocess.run(["git", "-C", home, "pull", "--ff-only"], capture_output=True, text=True)
+    out = (p.stdout + p.stderr).strip()
+    if out:
+        print(f"{DIM}{out}{RST}")
+    if p.returncode != 0:
+        print(f"{RED}update failed — resolve in {home} and retry.{RST}")
+        return
+    if "up to date" in out.lower():
+        return
+    print(f"{GREEN}updated — reloading Loyd…{RST}")
+    sys.stdout.flush()
+    os.execv(sys.executable, [sys.executable, os.path.join(home, "cli.py"), *sys.argv[1:]])
+
+
 def handle_slash(q, sess):
     """Dispatch a /command in the REPL. Returns 'exit' to quit, else None."""
     cmd, _, rest = q.partition(" ")
@@ -98,6 +121,7 @@ def handle_slash(q, sess):
     if cmd in ("/help", "/?"):
         print(f"{DIM}/claude <q>  escalate to cloud Claude (same tools)\n"
               f"/model [name] show or swap the local brain\n"
+              f"/update       git-pull the latest Loyd and reload\n"
               f"/tools        list callable tools\n"
               f"/exit         quit{RST}")
     elif cmd == "/tools":
@@ -116,6 +140,8 @@ def handle_slash(q, sess):
             sess.ask_claude(rest)
         else:
             print(f"{DIM}usage: /claude <question>{RST}")
+    elif cmd == "/update":
+        self_update()
     elif cmd in ("/exit", "/quit", "/q"):
         return "exit"
     else:

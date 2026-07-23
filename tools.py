@@ -21,9 +21,9 @@ MAX_OUTPUT_CHARS = 2500   # cap tool output so a small model isn't flooded
 MAX_OUTPUT_LINES = 50
 SHELL_TIMEOUT_S  = 30
 
-# Where tools ACT. Empty = this machine. Set LOYD_REMOTE="root@localhost" (+
+# Where tools ACT. Empty = this machine. Set LOYD_REMOTE="root@HOST" (+
 # LOYD_REMOTE_PORT, default 22) to run shell/docker/file tools on another box over
-# SSH — e.g. drive Tokyo7's stack from BinskyBox. The brain (ollama) is separate:
+# SSH — e.g. act on the server's stack from a laptop. The brain (ollama) is separate:
 # it's chosen by OLLAMA_URL, so you can think on one GPU and act on another host.
 _REMOTE      = os.getenv("LOYD_REMOTE", "").strip()
 _REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()

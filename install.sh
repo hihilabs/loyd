@@ -5,8 +5,8 @@
 #   # or, from a local checkout:  ./install.sh
 #
 # Env overrides:
-#   OLLAMA_URL  (default http://localhost:11434 — Tokyo7 over tailscale; use
-#                http://localhost:11434 on the LAN)
+#   OLLAMA_URL  (default http://localhost:11434 — point at your ollama host, e.g.
+#                http://ollama-box:11434, when the brain runs on another machine)
 #   LOYD_MODEL  (default qwen2.5-coder:7b)
 #   LOYD_HOME   (default ~/.loyd)      BIN_DIR (default ~/.local/bin)
 #   LOYD_REPO   (default https://github.com/hihilabs/loyd.git — public HTTPS clone;
