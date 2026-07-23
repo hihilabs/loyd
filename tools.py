@@ -39,7 +39,24 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object",
             "properties": {"name": {"type": "string", "description": "exact container name"}},
             "required": ["name"]}}},
+    # --- write tools (v0.2): the harness requires operator confirmation before each runs ---
+    {"type": "function", "function": {
+        "name": "write_file",
+        "description": "Write (create/overwrite) a text file. REQUIRES operator confirmation.",
+        "parameters": {"type": "object",
+            "properties": {"path": {"type": "string", "description": "absolute file path"},
+                           "content": {"type": "string", "description": "full new file contents"}},
+            "required": ["path", "content"]}}},
+    {"type": "function", "function": {
+        "name": "restart_container",
+        "description": "Restart a docker container by exact name. REQUIRES operator confirmation.",
+        "parameters": {"type": "object",
+            "properties": {"name": {"type": "string", "description": "exact container name"}},
+            "required": ["name"]}}},
 ]
+
+# Tools that mutate state — the harness must get operator confirmation before running these.
+WRITE_TOOLS = {"write_file", "restart_container"}
 
 # Mutating command binaries / patterns we refuse in read-only mode.
 _BLOCKED = re.compile(r"""(?xi)
@@ -127,10 +144,35 @@ def get_container_status(name: str) -> str:
         return p.stdout.strip()
 
 
+def write_file(path: str, content: str) -> str:
+    try:
+        pth = Path(path)
+        pth.parent.mkdir(parents=True, exist_ok=True)
+        existed = pth.exists()
+        pth.write_text(content if content is not None else "")
+        return f"{'Overwrote' if existed else 'Created'} {path} ({len(content or '')} chars)."
+    except Exception as e:
+        return f"ERROR writing {path}: {type(e).__name__}: {e}"
+
+
+def restart_container(name: str) -> str:
+    if not shutil.which("docker"):
+        return "ERROR: docker CLI not available on this host."
+    try:
+        p = subprocess.run(["docker", "restart", name], capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+    if p.returncode != 0:
+        return f"ERROR restarting {name}: {p.stderr.strip() or p.stdout.strip()}"
+    return f"Restarted container {name}."
+
+
 _IMPL = {
     "run_shell": lambda a: run_shell(a.get("command", "")),
     "read_file": lambda a: read_file(a.get("path", ""), a.get("max_lines")),
     "get_container_status": lambda a: get_container_status(a.get("name", "")),
+    "write_file": lambda a: write_file(a.get("path", ""), a.get("content", "")),
+    "restart_container": lambda a: restart_container(a.get("name", "")),
 }
 
 

@@ -13,9 +13,23 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent           # noqa: E402
-from tools import TOOL_SCHEMAS, execute_tool   # noqa: E402
+from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS   # noqa: E402
 
-DIM, CYAN, GREEN, YEL, RST = "\033[2m", "\033[36m", "\033[32m", "\033[33m", "\033[0m"
+DIM, CYAN, GREEN, YEL, RED, RST = "\033[2m", "\033[36m", "\033[32m", "\033[33m", "\033[31m", "\033[0m"
+
+
+def confirm_write(name, args):
+    """Interactive y/N gate before any mutating tool runs."""
+    if name == "write_file":
+        detail = f"path={args.get('path')!r}  ({len(args.get('content') or '')} chars)"
+    else:
+        detail = ", ".join(f"{k}={v!r}" for k, v in args.items())
+    try:
+        ans = input(f"{RED}⚠  Loyd wants to run {name}({detail}). Allow? [y/N] {RST}").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return ans in ("y", "yes")
 
 
 def make_printer():
@@ -28,6 +42,8 @@ def make_printer():
             r = data["result"]
             preview = r if len(r) <= 500 else r[:500] + f" …(+{len(r)-500})"
             print(f"{DIM}{preview}{RST}")
+        elif kind == "tool_declined":
+            print(f"{RED}✗ declined: {data['name']}{RST}")
         elif kind == "final":
             print(f"{GREEN}{data['text']}{RST}")
     return on_event
@@ -43,9 +59,11 @@ def main():
 
     agent = LoydAgent(model=args.model, ollama_url=args.url,
                       tool_schemas=TOOL_SCHEMAS, execute=execute_tool,
-                      max_iters=args.max_iters, on_event=make_printer())
+                      max_iters=args.max_iters, on_event=make_printer(),
+                      confirm=confirm_write, write_tools=WRITE_TOOLS)
 
-    print(f"{DIM}Loyd · {args.model} · {len(TOOL_SCHEMAS)} tools (read-only){RST}", file=sys.stderr)
+    print(f"{DIM}Loyd · {args.model} · {len(TOOL_SCHEMAS)} tools "
+          f"({len(WRITE_TOOLS)} write, confirm-gated){RST}", file=sys.stderr)
 
     if args.question:
         agent.run(" ".join(args.question))

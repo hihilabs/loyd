@@ -37,6 +37,8 @@ local model or cloud Claude for hard tasks is the intended growth path.
 - `cli.py` — one-shot + interactive front-end with transparent tool-call display.
 
 ## Status / roadmap
-- v0.1: read-only, CLI, Cogito 3B. **← you are here**
-- next: guarded write tools (edit files, restart containers) with confirm prompts;
-  VPS reach (ssh/deploy/log-read); wire the core into worker.py `ai_task`.
+- v0.1: read-only tools (`run_shell`, `read_file`, `get_container_status`), CLI. ✓
+- v0.2: confirm-gated write tools (`write_file`, `restart_container`) — each prompts the
+  operator y/N before running; declining feeds back cleanly. **← you are here**
+- next: VPS reach (ssh/deploy/log-read into the hihilabs box); wire the core into
+  worker.py `ai_task` so hihilabs.xyz jobs can drive Loyd.

@@ -93,11 +93,12 @@ def _extract_call(msg):
 
 
 class LoydAgent:
-    def __init__(self, model="cogito:3b",
+    def __init__(self, model="qwen2.5-coder:7b",
                  ollama_url="http://localhost:11434",
                  tool_schemas=None, execute=None,
                  system=DEFAULT_SYSTEM, max_iters=8, num_ctx=8192,
-                 on_event=None, timeout=180):
+                 on_event=None, timeout=180,
+                 confirm=None, write_tools=None):
         self.model = model
         self.url = ollama_url.rstrip("/") + "/api/chat"
         self.tool_schemas = tool_schemas or []
@@ -107,6 +108,8 @@ class LoydAgent:
         self.num_ctx = num_ctx
         self.timeout = timeout
         self.on_event = on_event or (lambda kind, data: None)  # (kind, data) hook for UI
+        self.confirm = confirm            # fn(name, args) -> bool, gate for write_tools
+        self.write_tools = set(write_tools or [])
 
     def _chat(self, messages, tools=None):
         body = json.dumps({
@@ -151,11 +154,17 @@ class LoydAgent:
             if not self.execute:
                 return "[Loyd has no tool executor configured]"
 
-            key = name + "|" + json.dumps(args, sort_keys=True, default=str)
-            repeat = key in seen
-            result = seen[key] if repeat else self.execute(name, args)
-            seen[key] = result
-            self.on_event("tool_result", {"name": name, "result": result, "repeat": repeat})
+            if name in self.write_tools and self.confirm and not self.confirm(name, args):
+                repeat = False
+                result = ("Operator DECLINED this action — do not retry it. "
+                          "Continue without it, or give your final answer.")
+                self.on_event("tool_declined", {"name": name, "args": args})
+            else:
+                key = name + "|" + json.dumps(args, sort_keys=True, default=str)
+                repeat = key in seen
+                result = seen[key] if repeat else self.execute(name, args)
+                seen[key] = result
+                self.on_event("tool_result", {"name": name, "result": result, "repeat": repeat})
 
             # Record the model's action + the observation, then continue the loop.
             messages.append({"role": "assistant",
