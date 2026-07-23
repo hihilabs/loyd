@@ -63,12 +63,12 @@ tailscale funnel --https=443 http://127.0.0.1:8848   # public HTTPS via tailscal
 cloudflared tunnel --url http://127.0.0.1:8848        # public HTTPS via cloudflare
 ```
 
-⚠️ **Auth gap for the claude.ai web modal:** the "Add custom connector" modal takes a
-URL + *optional OAuth* only — there's **no custom-header field**, so it can't send a
-bearer token. Until `loyd_mcp` grows OAuth, the pragmatic options for that surface are
-(a) a token embedded in the path/query (easy to add to `BearerAuth`; fine over TLS for
-2 users, but it lands in logs), or (b) skip the web connector and use the config-file
-clients below, which pass bearer headers cleanly. Prefer (b) where you can.
+**claude.ai web modal auth:** the "Add custom connector" modal takes a URL + *optional
+OAuth* only — no custom-header field, so it can't send a bearer header. `loyd_mcp`
+handles this with a **`?key=<token>` URL fallback**: paste `https://…/mcp?key=<token>`
+into the modal. It's authenticated the same way (same token map, same operator scoping)
+— the only cost is the token appears in access logs, so prefer the header path on
+clients that support it, and consider a read-only token for the web/mobile surface.
 
 ## Per-client connect (verify each on your actual client — UIs drift)
 

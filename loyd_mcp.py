@@ -13,6 +13,9 @@ Internet-exposed without auth is catastrophic, so:
   * Bearer-token auth is REQUIRED. Configure users via LOYD_MCP_TOKENS:
         LOYD_MCP_TOKENS="alice:o:secret1,bob:r:secret2"
     each entry is  user:role:token  — role r = read-only, o = operator.
+    Send it as `Authorization: Bearer <token>` (preferred) or, for clients with no
+    header field (the claude.ai web modal), `?key=<token>` on the URL — a query
+    token lands in access logs, so use it only where headers aren't settable.
   * Read/inspect tools are offered to any valid token; the write tools are
     offered and runnable ONLY to operators. The MCP client also prompts the
     user to approve each individual tool call — that's the second gate.
@@ -32,6 +35,7 @@ import contextlib
 import contextvars
 import os
 import sys
+from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tools import TOOL_SCHEMAS, WRITE_TOOLS, execute_tool, where  # noqa: E402
@@ -119,6 +123,12 @@ class BearerAuth:
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        if token not in TOKENS:
+            # fallback: ?key=<token> — for the claude.ai web modal, which takes only a
+            # URL (no header field). Header is preferred; a query token lands in access
+            # logs, so use it only where headers aren't settable.
+            qs = parse_qs(scope.get("query_string", b"").decode())
+            token = (qs.get("key") or [""])[0].strip() or token
         ident = TOKENS.get(token)
         if ident is None:
             resp = PlainTextResponse("401 unauthorized: valid bearer token required\n",
