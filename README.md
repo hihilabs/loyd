@@ -9,14 +9,25 @@ Cogito 3B aced isolated single-tool calls but tends to *narrate* the plan instea
 acting on multi-step/compound tasks — weaker orchestrator. Cogito 8B (native tool_calls,
 still fits VRAM) is the next one to A/B. Swap with `--model` / `OLLAMA_AI_MODEL`.
 
+## Install (one-liner)
+```bash
+# On a machine with repo access (SSH key), or if the repo is public:
+curl -fsSL https://raw.githubusercontent.com/hihilabs/loyd/main/install.sh | bash
+# From a local checkout (e.g. on Tokyo7):
+./install.sh
+```
+Puts a `loyd` command on your PATH that talks to the Tokyo7 ollama. Default `OLLAMA_URL`
+is Tokyo7 over tailscale (`localhost:11434`) so it works from any of your machines;
+override at install: `OLLAMA_URL=http://localhost:11434 LOYD_MODEL=cogito:8b ./install.sh`.
+(Private repo → `curl | bash` needs it public or a token; the installer clones via SSH by
+default, which works wherever your GitHub key does.)
+
 ## Run
 ```bash
-python3 /mnt/user/appdata/loyd/cli.py "is the plex container running and how much disk is free?"
-# or interactive:
-python3 /mnt/user/appdata/loyd/cli.py
-# or via the launcher (alias it):
-alias loyd='/mnt/user/appdata/loyd/loyd'
-loyd "tail the last 20 lines of the docker log for camagent-worker-gpu0"
+loyd "is the plex container running and how much disk is free?"
+loyd                              # interactive REPL
+# pre-install, directly:
+python3 /mnt/user/appdata/loyd/cli.py "tail the docker log for camagent-worker-gpu0"
 ```
 
 ## Swap the brain (one flag / env var)
