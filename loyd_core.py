@@ -125,6 +125,7 @@ class LoydAgent:
         """Run the agent loop for one user turn. Returns the final text answer."""
         messages = [{"role": "system", "content": self.system},
                     {"role": "user", "content": user_message}]
+        seen = {}   # key -> result, so identical repeat calls are cached, not re-run
         for step in range(self.max_iters):
             # On the last allowed step, force a text answer (no tools) so the model
             # concludes instead of spiralling through more exploratory calls.
@@ -149,17 +150,25 @@ class LoydAgent:
             self.on_event("tool_call", {"name": name, "args": args, "source": source, "dt": dt})
             if not self.execute:
                 return "[Loyd has no tool executor configured]"
-            result = self.execute(name, args)
-            self.on_event("tool_result", {"name": name, "result": result})
+
+            key = name + "|" + json.dumps(args, sort_keys=True, default=str)
+            repeat = key in seen
+            result = seen[key] if repeat else self.execute(name, args)
+            seen[key] = result
+            self.on_event("tool_result", {"name": name, "result": result, "repeat": repeat})
 
             # Record the model's action + the observation, then continue the loop.
             messages.append({"role": "assistant",
                              "content": msg.get("content", "") or "",
                              **({"tool_calls": msg["tool_calls"]} if source == "native" else {})})
+            obs = result
+            if repeat:
+                obs += ("\n\n[You have ALREADY run this exact call — do not call it again. "
+                        "Use the results you now have and give your final answer.]")
             if source == "native":
-                messages.append({"role": "tool", "name": name, "content": result})
+                messages.append({"role": "tool", "name": name, "content": obs})
             else:
                 messages.append({"role": "user",
-                                 "content": f"Observation from {name}:\n{result}\n\n"
-                                            f"Use this to answer, or call another tool if needed."})
+                                 "content": f"Observation from {name}:\n{obs}\n\n"
+                                            f"Answer now if you can, or call a DIFFERENT tool."})
         return "[Loyd hit the step limit without finishing — try narrowing the request]"

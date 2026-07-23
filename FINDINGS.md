@@ -35,8 +35,12 @@ plan as prose ("Call `get_container_status`…") and asked to continue — did n
 ## Decisions
 - **v0.1 brain: `qwen2.5-coder:7b`** (default). Reliable orchestration > small footprint.
   Already pulled; coexists with cam (~6GB @ 8k ctx).
-- **Next to A/B: Cogito 8B** (5.4GB, native tool_calls) — likely the sweet spot between
-  3B's footprint and 7B's reliability. Cogito 3B kept as a curiosity, not the driver.
+- **Cogito 8B A/B'd (2026-07-23): also narrates.** On the same compound task it wrote a
+  ```bash …``` one-liner as *text* instead of calling tools — same failure as 3B. So the
+  **whole Cogito family prefers bash-prose over structured tool calls on multi-step tasks**;
+  their native-tool_calls advantage doesn't survive the real loop. qwen2.5-coder:7b confirmed.
+  (Possible future angle: a Cogito-specific prompt forbidding code blocks — not pursued;
+  qwen already works.)
 - **Model is a swappable backend** (`OLLAMA_AI_MODEL` / `--model`): 3B → 8B → cloud Claude
   escalation, same harness/tools.
 - **Topology option (open):** dedicate gpu1 to Loyd so it can run a 14–16B (DeepSeek-Coder-V2-Lite

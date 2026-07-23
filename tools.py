@@ -13,7 +13,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-MAX_OUTPUT_CHARS = 6000   # cap tool output so a small model isn't flooded
+MAX_OUTPUT_CHARS = 2500   # cap tool output so a small model isn't flooded
+MAX_OUTPUT_LINES = 50
 SHELL_TIMEOUT_S  = 30
 
 TOOL_SCHEMAS = [
@@ -58,8 +59,11 @@ _BLOCKED = re.compile(r"""(?xi)
 
 
 def _cap(s: str) -> str:
+    lines = s.split("\n")
+    if len(lines) > MAX_OUTPUT_LINES:
+        s = "\n".join(lines[:MAX_OUTPUT_LINES]) + f"\n... [truncated, {len(lines) - MAX_OUTPUT_LINES} more lines]"
     if len(s) > MAX_OUTPUT_CHARS:
-        return s[:MAX_OUTPUT_CHARS] + f"\n... [truncated, {len(s) - MAX_OUTPUT_CHARS} more chars]"
+        s = s[:MAX_OUTPUT_CHARS] + f"\n... [truncated, {len(s) - MAX_OUTPUT_CHARS} more chars]"
     return s
 
 
