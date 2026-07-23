@@ -8,7 +8,9 @@ commands. This is a best-effort guard for a trusted local box + CLI-visible
 runs, NOT a security sandbox. Write/deploy tools come in a later version.
 """
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +18,27 @@ from pathlib import Path
 MAX_OUTPUT_CHARS = 2500   # cap tool output so a small model isn't flooded
 MAX_OUTPUT_LINES = 50
 SHELL_TIMEOUT_S  = 30
+
+# Where tools ACT. Empty = this machine. Set LOYD_REMOTE="root@localhost" (+
+# LOYD_REMOTE_PORT, default 22) to run shell/docker/file tools on another box over
+# SSH — e.g. drive Tokyo7's stack from BinskyBox. The brain (ollama) is separate:
+# it's chosen by OLLAMA_URL, so you can think on one GPU and act on another host.
+_REMOTE      = os.getenv("LOYD_REMOTE", "").strip()
+_REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()
+
+
+def _exec(command: str):
+    """Run a bash command locally, or on LOYD_REMOTE via SSH when set."""
+    if _REMOTE:
+        full = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                "-p", _REMOTE_PORT, _REMOTE, f"bash -lc {shlex.quote(command)}"]
+    else:
+        full = ["bash", "-lc", command]
+    return subprocess.run(full, capture_output=True, text=True, timeout=SHELL_TIMEOUT_S)
+
+
+def where() -> str:
+    return _REMOTE or "local"
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
@@ -92,8 +115,7 @@ def run_shell(command: str) -> str:
         return ("REFUSED: this looks like a mutating/destructive command and Loyd is read-only for now. "
                 "Describe what you want changed instead, and the operator can do it.")
     try:
-        p = subprocess.run(["bash", "-lc", command], capture_output=True, text=True,
-                           timeout=SHELL_TIMEOUT_S)
+        p = _exec(command)
     except subprocess.TimeoutExpired:
         return f"ERROR: command timed out after {SHELL_TIMEOUT_S}s."
     except Exception as e:
@@ -107,6 +129,16 @@ def run_shell(command: str) -> str:
 
 
 def read_file(path: str, max_lines: int = None) -> str:
+    if _REMOTE:
+        cmd = (f"head -n {int(max_lines)} {shlex.quote(path)}"
+               if max_lines and max_lines > 0 else f"cat {shlex.quote(path)}")
+        try:
+            p = _exec(cmd)
+        except Exception as e:
+            return f"ERROR reading {path} on {_REMOTE}: {type(e).__name__}: {e}"
+        if p.returncode != 0:
+            return f"ERROR reading {path} on {_REMOTE}: {p.stderr.strip()}"
+        return _cap(p.stdout)
     try:
         pth = Path(path)
         if not pth.is_file():
@@ -126,14 +158,13 @@ def read_file(path: str, max_lines: int = None) -> str:
 
 
 def get_container_status(name: str) -> str:
-    if not shutil.which("docker"):
+    if not _REMOTE and not shutil.which("docker"):
         return "ERROR: docker CLI not available on this host."
     fmt = ('{"running":{{.State.Running}},"status":"{{.State.Status}}",'
            '"health":"{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}",'
            '"image":"{{.Config.Image}}","started":"{{.State.StartedAt}}"}')
     try:
-        p = subprocess.run(["docker", "inspect", "-f", fmt, name],
-                           capture_output=True, text=True, timeout=15)
+        p = _exec(f"docker inspect -f {shlex.quote(fmt)} {shlex.quote(name)}")
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
     if p.returncode != 0:
@@ -156,10 +187,10 @@ def write_file(path: str, content: str) -> str:
 
 
 def restart_container(name: str) -> str:
-    if not shutil.which("docker"):
+    if not _REMOTE and not shutil.which("docker"):
         return "ERROR: docker CLI not available on this host."
     try:
-        p = subprocess.run(["docker", "restart", name], capture_output=True, text=True, timeout=60)
+        p = _exec(f"docker restart {shlex.quote(name)}")
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
     if p.returncode != 0:

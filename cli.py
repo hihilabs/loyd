@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent           # noqa: E402
-from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS   # noqa: E402
+from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where   # noqa: E402
 
 DIM, CYAN, GREEN, YEL, RED, RST = "\033[2m", "\033[36m", "\033[32m", "\033[33m", "\033[31m", "\033[0m"
 
@@ -62,8 +62,9 @@ def main():
                       max_iters=args.max_iters, on_event=make_printer(),
                       confirm=confirm_write, write_tools=WRITE_TOOLS)
 
-    print(f"{DIM}Loyd · {args.model} · {len(TOOL_SCHEMAS)} tools "
-          f"({len(WRITE_TOOLS)} write, confirm-gated){RST}", file=sys.stderr)
+    print(f"{DIM}Loyd · brain={args.model} @ {args.url} · acts={where()} · "
+          f"{len(TOOL_SCHEMAS)} tools ({len(WRITE_TOOLS)} write, confirm-gated){RST}",
+          file=sys.stderr)
 
     if args.question:
         agent.run(" ".join(args.question))
