@@ -30,12 +30,16 @@ _REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()
 
 
 def _exec(command: str):
-    """Run a bash command locally, or on LOYD_REMOTE via SSH when set."""
+    """Run a bash command locally, or on LOYD_REMOTE via SSH when set.
+    Uses a NON-login shell (bash -c): login shells (-l) source /etc/profile +
+    ~/.bash_profile, which on managed hosts print banners (e.g. Plesk) that
+    pollute tool output — and give no benefit here since docker/standard tools
+    are on the default PATH."""
     if _REMOTE:
         full = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                "-p", _REMOTE_PORT, _REMOTE, f"bash -lc {shlex.quote(command)}"]
+                "-p", _REMOTE_PORT, _REMOTE, f"bash -c {shlex.quote(command)}"]
     else:
-        full = ["bash", "-lc", command]
+        full = ["bash", "-c", command]
     return subprocess.run(full, capture_output=True, text=True, timeout=SHELL_TIMEOUT_S)
 
 
