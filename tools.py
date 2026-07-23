@@ -163,16 +163,35 @@ def get_container_status(name: str) -> str:
     fmt = ('{"running":{{.State.Running}},"status":"{{.State.Status}}",'
            '"health":"{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}",'
            '"image":"{{.Config.Image}}","started":"{{.State.StartedAt}}"}')
+    def _inspect(cname):
+        p = _exec(f"docker inspect -f {shlex.quote(fmt)} {shlex.quote(cname)}")
+        if p.returncode != 0:
+            return None
+        try:
+            return json.loads(p.stdout.strip())
+        except Exception:
+            return {"raw": p.stdout.strip()}
+
     try:
-        p = _exec(f"docker inspect -f {shlex.quote(fmt)} {shlex.quote(name)}")
+        d = _inspect(name)                       # exact name first
+        if d is not None:
+            return json.dumps(d)
+        # fuzzy: prefer NAME-PREFIX matches (so 'plex' -> 'Plex-Media-Server', not the
+        # 'octoplex-*' substring hits); fall back to substring only if nothing prefixes.
+        lp = _exec("docker ps -a --format '{{.Names}}'")
+        names = lp.stdout.split() if lp.returncode == 0 else []
+        q = name.lower()
+        hits = [n for n in names if n.lower().startswith(q)] or [n for n in names if q in n.lower()]
+        if len(hits) == 1:
+            d = _inspect(hits[0]) or {}
+            d["matched_name"] = hits[0]
+            return json.dumps(d)
+        if len(hits) > 1:
+            return (f"No container is named exactly '{name}'. Closest matches: "
+                    f"{', '.join(hits[:10])}. Re-ask about one by its exact name.")
+        return f"No container matching '{name}'."
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
-    if p.returncode != 0:
-        return f"No such container '{name}' (or docker error): {p.stderr.strip()}"
-    try:
-        return json.dumps(json.loads(p.stdout.strip()))
-    except Exception:
-        return p.stdout.strip()
 
 
 def write_file(path: str, content: str) -> str:
