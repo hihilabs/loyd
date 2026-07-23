@@ -1,11 +1,13 @@
 """
-Loyd v0.1 tools — READ-ONLY.
+Loyd tools — inspection (read-only) + a few confirm-gated write actions.
 
 Each tool has an ollama function schema (TOOL_SCHEMAS) and an implementation.
 execute_tool() dispatches by name and always returns a string (the tool result
-the model sees). Read-only by design: run_shell blocks obviously-mutating
-commands. This is a best-effort guard for a trusted local box + CLI-visible
-runs, NOT a security sandbox. Write/deploy tools come in a later version.
+the model sees). run_shell refuses obviously-mutating commands — a best-effort
+denylist for a trusted local box + CLI-visible runs, NOT a security sandbox.
+State-changing actions live in separate WRITE_TOOLS (write_file,
+restart_container, prune_images); the harness gates each on operator
+confirmation, so destructive work never rides through run_shell unconfirmed.
 """
 import json
 import os
@@ -76,10 +78,20 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object",
             "properties": {"name": {"type": "string", "description": "exact container name"}},
             "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "prune_images",
+        "description": "Remove unused docker images to reclaim disk. scope='dangling' (default) "
+                       "removes only untagged <none> images and is safe; scope='all' removes every "
+                       "image not used by any container. Neither touches running containers. "
+                       "REQUIRES operator confirmation.",
+        "parameters": {"type": "object",
+            "properties": {"scope": {"type": "string", "enum": ["dangling", "all"],
+                                     "description": "'dangling' (default, untagged only) or 'all' (all unused)"}},
+            "required": []}}},
 ]
 
 # Tools that mutate state — the harness must get operator confirmation before running these.
-WRITE_TOOLS = {"write_file", "restart_container"}
+WRITE_TOOLS = {"write_file", "restart_container", "prune_images"}
 
 # Mutating command binaries / patterns we refuse in read-only mode.
 _BLOCKED = re.compile(r"""(?xi)
@@ -90,7 +102,14 @@ _BLOCKED = re.compile(r"""(?xi)
         apt|apt-get|yum|dnf|pacman|pip|pip3|npm|yarn|make|
         mkdir|touch|install|useradd|userdel|passwd|crontab|sysctl
     )([\s;&|)]|$)
-  | \bdocker\s+(stop|rm|kill|restart|start|down|up|prune|create|build|exec|run|compose|tag|push|pull|load|save|update|rename)\b
+  # docker: refuse ANY mutating verb anywhere after `docker` (up to a shell
+  # separator), so `docker image prune`, `docker system prune -a -f`, `docker rmi`,
+  # `docker container rm`, `docker builder prune`, etc. are all caught — not just the
+  # bare `docker prune`/`docker rm` forms the old pattern matched. The required
+  # whitespace before the verb keeps hyphenated names (e.g. `my-restart-app`) allowed.
+  | \bdocker\b[^\n;&|]*?\s(prune|rm|rmi|remove|stop|start|restart|kill|pause|unpause|
+       create|run|exec|build|rebuild|tag|push|pull|load|save|import|export|commit|
+       update|rename|cp|up|down|deploy|scale|init|leave)\b
   | \bgit\s+(push|reset|checkout|clean|rebase|commit|merge|pull|fetch|tag|remote|branch\s+-[dD]|stash\s+drop)\b
   | \bsed\b[^|]*\s-i
   | \bperl\b[^|]*\s-i
@@ -217,12 +236,35 @@ def restart_container(name: str) -> str:
     return f"Restarted container {name}."
 
 
+def prune_images(scope: str = "dangling") -> str:
+    """Confirm-gated: reclaim disk by removing unused images. Runs its own docker
+    command via _exec (not run_shell), so it's exempt from the read-only denylist —
+    the operator confirmation in the harness is the gate instead."""
+    if not _REMOTE and not shutil.which("docker"):
+        return "ERROR: docker CLI not available on this host."
+    scope = (scope or "dangling").strip().lower()
+    if scope == "all":
+        cmd = "docker image prune -a -f"
+    elif scope == "dangling":
+        cmd = "docker image prune -f"
+    else:
+        return f"ERROR: scope must be 'dangling' or 'all', got {scope!r}."
+    try:
+        p = _exec(cmd)
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+    if p.returncode != 0:
+        return f"ERROR pruning {scope} images: {p.stderr.strip() or p.stdout.strip()}"
+    return _cap((p.stdout or "").strip() or f"Nothing to remove ({scope} images).")
+
+
 _IMPL = {
     "run_shell": lambda a: run_shell(a.get("command", "")),
     "read_file": lambda a: read_file(a.get("path", ""), a.get("max_lines")),
     "get_container_status": lambda a: get_container_status(a.get("name", "")),
     "write_file": lambda a: write_file(a.get("path", ""), a.get("content", "")),
     "restart_container": lambda a: restart_container(a.get("name", "")),
+    "prune_images": lambda a: prune_images(a.get("scope", "dangling")),
 }
 
 
