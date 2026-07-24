@@ -162,7 +162,11 @@ def main():
     ops = sum(v["operator"] for v in TOKENS.values())
     print(f"Loyd MCP · acts={where()} · {len(TOKENS)} users ({ops} operator) · "
           f"listening http://{host}:{port}{PATH}", file=sys.stderr)
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    # LOYD_MCP_LOG_LEVEL=info surfaces per-request access logs — invaluable when a
+    # client (e.g. a hosted connector) says "can't reach" and you need to know
+    # whether its request arrives at all, and with what status.
+    uvicorn.run(app, host=host, port=port,
+                log_level=os.getenv("LOYD_MCP_LOG_LEVEL", "warning"))
 
 
 if __name__ == "__main__":
