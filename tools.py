@@ -28,6 +28,14 @@ SHELL_TIMEOUT_S  = 30
 _REMOTE      = os.getenv("LOYD_REMOTE", "").strip()
 _REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()
 
+# Capability mode. "readonly" (default): run_shell refuses every mutating command
+# (see _BLOCKED); state changes go only through confirm-gated WRITE_TOOLS.
+# "operator": run_shell may run ANYTHING except a few catastrophic, irreversible
+# commands (see _CATASTROPHIC), and the harness still shows a y/N confirm for each
+# individually-destructive command (see is_destructive) so a human approves it.
+# Set LOYD_MODE=operator to do real dev/ops work on a trusted host.
+_MODE = os.getenv("LOYD_MODE", "readonly").strip().lower()
+
 
 def _exec(command: str):
     """Run a bash command locally, or on LOYD_REMOTE via SSH when set.
@@ -46,12 +54,18 @@ def _exec(command: str):
 def where() -> str:
     return _REMOTE or "local"
 
+
+def mode() -> str:
+    return "operator" if _MODE == "operator" else "readonly"
+
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "run_shell",
-        "description": "Run a READ-ONLY shell command on the Tokyo7 host and return its stdout/stderr. "
-                       "Use for inspection: ls, cat, df, docker ps, docker logs, grep, ps, nvidia-smi, etc. "
-                       "Mutating commands (rm, mv, docker stop/restart, git push, writes) are refused.",
+        "description": "Run a shell command on the host Loyd is acting on and return its stdout/stderr. "
+                       "In read-only mode, mutating commands (rm, mv, docker stop/restart, git push, "
+                       "writes) are refused. In operator mode they run — destructive ones after operator "
+                       "confirmation, and a few catastrophic ones (disk wipe, system-root delete, power-off) "
+                       "are always refused.",
         "parameters": {"type": "object",
             "properties": {"command": {"type": "string", "description": "the shell command to run"}},
             "required": ["command"]}}},
@@ -120,6 +134,28 @@ _BLOCKED = re.compile(r"""(?xi)
   | (?<![0-9])>>?(?!\s*(/dev/null|&))   # output redirection to a real file (allow >/dev/null, 2>&1)
 """)
 
+# Irreversible, box-bricking commands — refused even in operator mode, even if the
+# operator confirmed. Last-resort backstop; the confirm gate below already shows the
+# operator every destructive command, so this only has to catch the un-take-backs:
+# wiping a disk, deleting a system root, or powering the box off.
+_CATASTROPHIC = re.compile(r"""(?xi)
+    \brm\s+(-\S+\s+)*(/(\s|$)|/\*|~(\s|/|$)|\$HOME|/(etc|boot|bin|sbin|usr|lib\w*|var|root|dev|proc|sys)(/|\s|$))
+  | \b(mkfs\w*|wipefs|sfdisk|fdisk|parted)\b
+  | \bdd\b.*\bof=/dev/
+  | >\s*/dev/(sd|nvme|hd|vd|mmcblk)
+  | \bshred\b.*\s/dev/
+  | \b(shutdown|reboot|halt|poweroff|telinit)\b
+  | \binit\s+[06]\b
+  | :\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:[^}]*&   # fork bomb  :(){ :|:& };:
+""")
+
+
+def is_destructive(command: str) -> bool:
+    """True if a shell command mutates state (matches the read-only denylist).
+    The harness uses this in operator mode to show a y/N confirm for each such
+    command — so operator mode runs safe commands freely but gates destructive ones."""
+    return bool(_BLOCKED.search(command or ""))
+
 
 def _cap(s: str) -> str:
     lines = s.split("\n")
@@ -134,9 +170,16 @@ def run_shell(command: str) -> str:
     command = (command or "").strip()
     if not command:
         return "ERROR: empty command."
-    if _BLOCKED.search(command):
-        return ("REFUSED: this looks like a mutating/destructive command and Loyd is read-only for now. "
-                "Describe what you want changed instead, and the operator can do it.")
+    if _MODE == "operator":
+        if _CATASTROPHIC.search(command):
+            return ("REFUSED: this is a catastrophic, irreversible command (disk wipe, "
+                    "system-root delete, or power-off). Loyd never runs it, even in operator "
+                    "mode — do it by hand if you truly mean to.")
+        # non-catastrophic commands run; the harness confirms destructive ones first.
+    elif _BLOCKED.search(command):
+        return ("REFUSED: this looks like a mutating/destructive command and Loyd is in "
+                "read-only mode. Set LOYD_MODE=operator to allow changes (destructive ones "
+                "still prompt for confirmation), or use a confirm-gated write tool.")
     try:
         p = _exec(command)
     except subprocess.TimeoutExpired:

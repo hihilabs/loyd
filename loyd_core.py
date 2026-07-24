@@ -16,26 +16,43 @@ import re
 import time
 import urllib.request
 
-DEFAULT_SYSTEM = (
-    "You are Loyd, a local dev/ops assistant for the Tokyo7 Unraid server and the "
-    "hihilabs VPS. You ACT by calling tools — you never just describe what you would do.\n"
-    "HARD RULES:\n"
-    "1. If answering needs real system state, IMMEDIATELY call a tool. Never write "
-    "'Use get_container_status' or 'I will run...' — actually emit the tool call.\n"
-    "2. Take ONE tool action at a time. You will be shown its result, then you decide the "
-    "next action. You drive the whole task yourself — NEVER ask the user to continue or say "
-    "'let me know when ready'.\n"
-    "3. For a request with several parts, call a tool for the FIRST part now; handle the "
-    "rest in later steps after you see each result.\n"
-    "4. Most tools are READ-ONLY. Two (write_file, restart_container) change state and "
-    "REQUIRE operator confirmation before running — use them only when the task clearly "
-    "needs a write, never for destructive actions the operator did not ask for.\n"
-    "5. Stop as soon as you can answer — do NOT keep exploring. If a container/file is not "
-    "found, report that plainly and answer with what you know.\n"
-    "6. ONLY when you already have the info you need, reply with a short, direct final "
-    "answer and NO tool call.\n"
-    "Be concise and practical."
-)
+def build_system(acts="local", mode="readonly"):
+    """System prompt tailored to WHERE Loyd is acting (so it never guesses the host)
+    and what it's allowed to do (readonly vs operator)."""
+    loc = ("the local machine you are running on" if acts in ("local", "", None)
+           else f"the remote host {acts} (reached over SSH)")
+    if mode == "operator":
+        cap = ("You are in OPERATOR mode: your shell tool can run real commands — installs, "
+               "git, builds, file edits, service restarts. Destructive commands are shown to "
+               "the operator for a yes/no first; a few catastrophic ones (disk wipe, "
+               "system-root delete, power-off) are always refused. Use this power only for "
+               "what the user actually asked; don't clean up or refactor beyond the request.")
+    else:
+        cap = ("You are in READ-ONLY mode: your shell tool refuses mutating commands. State "
+               "changes go only through the confirm-gated write tools (write_file, "
+               "restart_container, prune_images).")
+    return (
+        "You are Loyd, a local dev/ops assistant. You ACT by calling tools — you never just "
+        "describe what you would do.\n"
+        f"WHERE YOU ARE: every tool runs on {loc}. Do not assume any other machine; if the "
+        "user asks about a host you are not acting on, say so plainly instead of guessing.\n"
+        f"{cap}\n"
+        "HARD RULES:\n"
+        "1. If answering needs real system state, IMMEDIATELY call a tool — never write 'I "
+        "will run...' or name a tool in prose; actually emit the tool call.\n"
+        "2. Take ONE tool action at a time; you'll see its result, then decide the next. You "
+        "drive the whole task — never ask the user to continue.\n"
+        "3. Report findings in your final answer. NEVER write a file just to record an "
+        "observation or a note-to-self — that is not a deliverable.\n"
+        "4. Stop as soon as you can answer. If a container/file/host isn't found, say so "
+        "plainly and answer with what you know — don't keep exploring.\n"
+        "5. When you already have what you need, reply with a short, direct final answer and "
+        "NO tool call.\n"
+        "Be concise and practical."
+    )
+
+
+DEFAULT_SYSTEM = build_system()
 
 
 def _first_json_obj(s):
@@ -99,7 +116,7 @@ class LoydAgent:
                  tool_schemas=None, execute=None,
                  system=DEFAULT_SYSTEM, max_iters=8, num_ctx=8192,
                  on_event=None, timeout=180,
-                 confirm=None, write_tools=None):
+                 confirm=None, write_tools=None, should_confirm=None):
         self.model = model
         self.url = ollama_url.rstrip("/") + "/api/chat"
         self.tool_schemas = tool_schemas or []
@@ -109,8 +126,11 @@ class LoydAgent:
         self.num_ctx = num_ctx
         self.timeout = timeout
         self.on_event = on_event or (lambda kind, data: None)  # (kind, data) hook for UI
-        self.confirm = confirm            # fn(name, args) -> bool, gate for write_tools
+        self.confirm = confirm            # fn(name, args) -> bool, operator's yes/no gate
         self.write_tools = set(write_tools or [])
+        # Predicate: does THIS call need confirmation? Defaults to "is a write tool";
+        # callers can widen it (e.g. also confirm destructive run_shell in operator mode).
+        self.should_confirm = should_confirm or (lambda name, args: name in self.write_tools)
 
     def _chat(self, messages, tools=None):
         body = json.dumps({
@@ -155,7 +175,7 @@ class LoydAgent:
             if not self.execute:
                 return "[Loyd has no tool executor configured]"
 
-            if name in self.write_tools and self.confirm and not self.confirm(name, args):
+            if self.confirm and self.should_confirm(name, args) and not self.confirm(name, args):
                 repeat = False
                 result = ("Operator DECLINED this action — do not retry it. "
                           "Continue without it, or give your final answer.")
