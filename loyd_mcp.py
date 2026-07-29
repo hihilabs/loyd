@@ -62,6 +62,8 @@ import uvicorn                                                     # noqa: E402
 from mcp.server.lowlevel import Server                             # noqa: E402
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager  # noqa: E402
 from starlette.applications import Starlette                       # noqa: E402
+from starlette.middleware import Middleware                        # noqa: E402
+from starlette.middleware.cors import CORSMiddleware                # noqa: E402
 from starlette.requests import Request                             # noqa: E402
 from starlette.responses import (HTMLResponse, JSONResponse,       # noqa: E402
                                   PlainTextResponse, RedirectResponse)
@@ -369,15 +371,26 @@ async def oauth_token(request: Request):
     })
 
 
-app = Starlette(routes=[
-    Route(f"/.well-known/oauth-protected-resource{PATH}", oauth_protected_resource),
-    Route("/.well-known/oauth-protected-resource", oauth_protected_resource),
-    Route("/.well-known/oauth-authorization-server", oauth_authorization_server),
-    Route("/register", oauth_register, methods=["POST"]),
-    Route("/authorize", oauth_authorize, methods=["GET", "POST"]),
-    Route("/token", oauth_token, methods=["POST"]),
-    Mount(PATH, app=BearerAuth(_mcp_asgi)),
-], lifespan=_lifespan)
+app = Starlette(
+    routes=[
+        Route(f"/.well-known/oauth-protected-resource{PATH}", oauth_protected_resource),
+        Route("/.well-known/oauth-protected-resource", oauth_protected_resource),
+        Route("/.well-known/oauth-authorization-server", oauth_authorization_server),
+        Route("/register", oauth_register, methods=["POST"]),
+        Route("/authorize", oauth_authorize, methods=["GET", "POST"]),
+        Route("/token", oauth_token, methods=["POST"]),
+        Mount(PATH, app=BearerAuth(_mcp_asgi)),
+    ],
+    lifespan=_lifespan,
+    # A Connectors GUI likely does registration/discovery from a browser-based
+    # renderer, unlike every curl/http.client test used to verify this — those
+    # don't enforce CORS at all, so a preflight-blocked fetch there would look
+    # identical to success in this codebase's own testing but fail silently in
+    # the real client. No auth/security tradeoff here: CORS only gates whether
+    # browser JS may READ a response, never whether the request reaches the
+    # server — BearerAuth is the actual access-control boundary, unaffected.
+    middleware=[Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])],
+)
 
 
 def main():
