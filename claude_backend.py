@@ -43,7 +43,8 @@ class ClaudeAgent:
     def __init__(self, model="claude-opus-4-8", api_key=None,
                  tool_schemas=None, execute=None,
                  system=DEFAULT_SYSTEM, max_iters=8, max_tokens=4096,
-                 on_event=None, timeout=120, confirm=None, write_tools=None):
+                 on_event=None, timeout=120, confirm=None, write_tools=None,
+                 should_confirm=None):
         self.model = model
         self.api_key = api_key
         self.tools = _to_anthropic_tools(tool_schemas)
@@ -53,8 +54,9 @@ class ClaudeAgent:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.on_event = on_event or (lambda kind, data: None)
-        self.confirm = confirm            # fn(name, args) -> bool, gate for write_tools
+        self.confirm = confirm            # fn(name, args) -> bool, operator's yes/no gate
         self.write_tools = set(write_tools or [])
+        self.should_confirm = should_confirm or (lambda name, args: name in self.write_tools)
 
     def _messages(self, messages):
         body = json.dumps({
@@ -102,7 +104,7 @@ class ClaudeAgent:
                 self.on_event("tool_call", {"name": name, "args": args,
                                             "source": "claude", "dt": dt})
                 dt = 0.0  # attribute the request time to the first call only
-                if name in self.write_tools and self.confirm and not self.confirm(name, args):
+                if self.confirm and self.should_confirm(name, args) and not self.confirm(name, args):
                     result = ("Operator DECLINED this action — do not retry it. "
                               "Continue without it, or give your final answer.")
                     self.on_event("tool_declined", {"name": name, "args": args})

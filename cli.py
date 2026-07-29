@@ -21,9 +21,19 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from loyd_core import LoydAgent           # noqa: E402
-from claude_backend import ClaudeAgent    # noqa: E402
-from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where   # noqa: E402
+from loyd_core import LoydAgent, build_system     # noqa: E402
+from claude_backend import ClaudeAgent            # noqa: E402
+from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
+
+
+def should_confirm(name, args):
+    """Which tool calls get a y/N. Write tools always; in operator mode also any
+    destructive run_shell command (so safe commands run free, dangerous ones prompt)."""
+    if name in WRITE_TOOLS:
+        return True
+    if name == "run_shell" and mode() == "operator":
+        return is_destructive(args.get("command", ""))
+    return False
 
 DIM, CYAN, GREEN, YEL, RED, RST = "\033[2m", "\033[36m", "\033[32m", "\033[33m", "\033[31m", "\033[0m"
 
@@ -67,20 +77,21 @@ class Session:
         self.printer = make_printer()
         self.claude_model = claude_model
         self.max_iters = max_iters
+        self._system = build_system(where(), mode())
         self.agent = LoydAgent(
-            model=model, ollama_url=url,
+            model=model, ollama_url=url, system=self._system,
             tool_schemas=TOOL_SCHEMAS, execute=execute_tool,
             max_iters=max_iters, on_event=self.printer,
-            confirm=confirm_write, write_tools=WRITE_TOOLS)
+            confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         self._claude = None
 
     def claude(self):
         if self._claude is None:
             self._claude = ClaudeAgent(
                 model=self.claude_model, api_key=os.getenv("ANTHROPIC_API_KEY"),
-                tool_schemas=TOOL_SCHEMAS, execute=execute_tool,
+                tool_schemas=TOOL_SCHEMAS, execute=execute_tool, system=self._system,
                 max_iters=self.max_iters, on_event=self.printer,
-                confirm=confirm_write, write_tools=WRITE_TOOLS)
+                confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         return self._claude
 
     def ask_local(self, q):
@@ -161,7 +172,9 @@ def main():
     sess = Session(args.model, args.url, args.claude_model, args.max_iters)
 
     key = "claude ready" if os.getenv("ANTHROPIC_API_KEY") else "/claude needs ANTHROPIC_API_KEY"
-    print(f"{DIM}Loyd · brain={args.model} @ {args.url} · acts={where()} · "
+    m = mode()
+    mtag = f"{RED}OPERATOR{RST}{DIM}" if m == "operator" else "read-only"
+    print(f"{DIM}Loyd · brain={args.model} @ {args.url} · acts={where()} · mode={mtag} · "
           f"{len(TOOL_SCHEMAS)} tools ({len(WRITE_TOOLS)} write, confirm-gated) · {key}{RST}",
           file=sys.stderr)
 
