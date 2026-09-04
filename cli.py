@@ -5,10 +5,15 @@ Loyd CLI — talk to your local dev/ops assistant.
   loyd "is the plex container running and how much disk is free?"   # one-shot
   loyd                                                              # interactive REPL
 
+Cloud Claude answers by default; the local Ollama brain is the fallback for
+when the cloud path can't be reached (policy 2026-09-04 — the GPU box is never
+primary, its uptime isn't ours to guarantee). Both share the same tools.
+
 The local brain is swappable:  --model cogito:8b  or  OLLAMA_AI_MODEL=cogito:8b loyd ...
 
 REPL slash commands:
-  /claude <q>   escalate one hard question to cloud Claude (same tools; needs ANTHROPIC_API_KEY)
+  /local <q>    force one question onto the local brain instead of Claude
+  /claude <q>   force one question onto cloud Claude (the default anyway)
   /model [name] show or hot-swap the local brain
   /tools        list the tools Loyd can call
   /help         this help
@@ -22,7 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
-from claude_backend import ClaudeAgent            # noqa: E402
+from claude_backend import ClaudeAgent, ClaudeUnavailable   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
 
 
@@ -66,6 +71,8 @@ def make_printer():
             print(f"{RED}✗ declined: {data['name']}{RST}")
         elif kind == "final":
             print(f"{GREEN}{data['text']}{RST}")
+        elif kind == "error":
+            print(f"{RED}{data['text']}{RST}", file=sys.stderr)
     return on_event
 
 
@@ -99,8 +106,22 @@ class Session:
 
     def ask_claude(self, q):
         key = "set" if os.getenv("ANTHROPIC_API_KEY") else "MISSING"
-        print(f"{DIM}↑ escalating to {self.claude_model} (key {key}){RST}", file=sys.stderr)
+        print(f"{DIM}↑ {self.claude_model} (key {key}){RST}", file=sys.stderr)
         self.claude().run(q)
+
+    def ask(self, q):
+        """The default path: Claude, with the local brain picking up slack.
+
+        Falling back is only safe because ClaudeUnavailable is raised before
+        anything is emitted -- same 'fall back only while uncommitted' rule
+        the hihilabs router uses. A Claude answer we dislike is still an
+        answer and does not get retried locally."""
+        try:
+            self.ask_claude(q)
+        except ClaudeUnavailable as e:
+            print(f"{DIM}↓ cloud unavailable ({e}) — falling back to {self.agent.model}{RST}",
+                  file=sys.stderr)
+            self.ask_local(q)
 
 
 def self_update():
@@ -130,7 +151,8 @@ def handle_slash(q, sess):
     cmd, _, rest = q.partition(" ")
     cmd, rest = cmd.lower(), rest.strip()
     if cmd in ("/help", "/?"):
-        print(f"{DIM}/claude <q>  escalate to cloud Claude (same tools)\n"
+        print(f"{DIM}/local <q>   force the local brain (Claude is the default)\n"
+              f"/claude <q>  force cloud Claude (same tools)\n"
               f"/model [name] show or swap the local brain\n"
               f"/update       git-pull the latest Loyd and reload\n"
               f"/tools        list callable tools\n"
@@ -146,6 +168,11 @@ def handle_slash(q, sess):
             print(f"{DIM}local brain -> {rest}{RST}")
         else:
             print(f"{DIM}local brain = {sess.agent.model}{RST}")
+    elif cmd == "/local":
+        if rest:
+            sess.ask_local(rest)
+        else:
+            print(f"{DIM}usage: /local <question>{RST}")
     elif cmd == "/claude":
         if rest:
             sess.ask_claude(rest)
@@ -171,19 +198,21 @@ def main():
 
     sess = Session(args.model, args.url, args.claude_model, args.max_iters)
 
-    key = "claude ready" if os.getenv("ANTHROPIC_API_KEY") else "/claude needs ANTHROPIC_API_KEY"
+    key = ("claude ready" if os.getenv("ANTHROPIC_API_KEY")
+           else f"{RED}no ANTHROPIC_API_KEY — every turn falls back to {args.model}{RST}{DIM}")
     m = mode()
     mtag = f"{RED}OPERATOR{RST}{DIM}" if m == "operator" else "read-only"
-    print(f"{DIM}Loyd · brain={args.model} @ {args.url} · acts={where()} · mode={mtag} · "
+    print(f"{DIM}Loyd · {args.claude_model} · fallback brain={args.model} @ {args.url} · "
+          f"acts={where()} · mode={mtag} · "
           f"{len(TOOL_SCHEMAS)} tools ({len(WRITE_TOOLS)} write, confirm-gated) · {key}{RST}",
           file=sys.stderr)
 
     if args.question:
         q = " ".join(args.question)
         if q.startswith("/"):
-            handle_slash(q, sess)          # e.g. loyd "/claude why did the worker freeze?"
+            handle_slash(q, sess)          # e.g. loyd "/local why did the worker freeze?"
         else:
-            sess.ask_local(q)
+            sess.ask(q)
         return
 
     print(f"{DIM}Interactive. /help for commands, Ctrl-C or 'exit' to quit.{RST}", file=sys.stderr)
@@ -201,7 +230,7 @@ def main():
             if handle_slash(q, sess) == "exit":
                 break
             continue
-        sess.ask_local(q)
+        sess.ask(q)
 
 
 if __name__ == "__main__":

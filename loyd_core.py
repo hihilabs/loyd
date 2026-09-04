@@ -163,7 +163,12 @@ class LoydAgent:
                 else:
                     msg, dt = self._chat(messages)
             except Exception as e:
-                return f"[Loyd error talking to the model: {type(e).__name__}: {e}]"
+                # Emit, don't just return: callers print via on_event, so a
+                # bare return here exits silently -- which is how a dead local
+                # brain looked like a successful empty answer.
+                err = f"[Loyd error talking to the model: {type(e).__name__}: {e}]"
+                self.on_event("error", {"text": err})
+                return err
             name, args, source = (None, None, "none") if last else _extract_call(msg)
 
             if name is None:

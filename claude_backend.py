@@ -16,6 +16,12 @@ import time
 import urllib.error
 import urllib.request
 
+
+class ClaudeUnavailable(Exception):
+    """The cloud path could not be used -- missing key or a failed request.
+    Distinct from Claude answering badly, which is a normal return."""
+
+
 from loyd_core import DEFAULT_SYSTEM
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -72,9 +78,14 @@ class ClaudeAgent:
             return json.loads(r.read())
 
     def run(self, user_message):
+        """Returns the final text. Raises ClaudeUnavailable when the cloud
+        path could not be used at all -- no key, or the request never got a
+        reply. That is out-of-band on purpose: the caller falls back to the
+        local brain only while nothing has been emitted yet, and a bracketed
+        string return is indistinguishable from a real answer."""
         """Run the tool-use loop for one user turn. Returns the final text answer."""
         if not self.api_key:
-            return "[/claude needs ANTHROPIC_API_KEY set in the environment]"
+            raise ClaudeUnavailable("ANTHROPIC_API_KEY is not set")
         messages = [{"role": "user", "content": user_message}]
         for _step in range(self.max_iters):
             t0 = time.time()
@@ -82,9 +93,9 @@ class ClaudeAgent:
                 resp = self._messages(messages)
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors="replace")[:400]
-                return f"[Claude API error {e.code}: {detail}]"
+                raise ClaudeUnavailable(f"Claude API error {e.code}: {detail}")
             except Exception as e:
-                return f"[Loyd error talking to Claude: {type(e).__name__}: {e}]"
+                raise ClaudeUnavailable(f"{type(e).__name__}: {e}")
             dt = time.time() - t0
 
             content = resp.get("content", []) or []
