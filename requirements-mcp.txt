@@ -1,5 +1,6 @@
 # Optional — only for the MCP server (loyd_mcp.py). The CLI stays stdlib-only.
 #   python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-mcp.txt
-mcp>=1.0
+# <2: mcp 2.x removed the lowlevel Server decorators (@server.list_tools) loyd_mcp uses.
+mcp>=1.9,<2
 uvicorn>=0.30
 # starlette + anyio come in as mcp deps; pinned transitively.
