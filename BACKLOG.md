@@ -26,9 +26,9 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       the conclude-guard on the last step, confirm/decline path — using a stub `/api/chat`.
 - [ ] **Tests for `cli.py`**: `should_confirm`, `handle_slash` (`/tools`, `/model`, `/audit`),
       `self_update` refusing on a detached HEAD.
-- [ ] **`audit_tail` MCP tool (operator-only)**: last N audit records, filterable by actor /
+- [ ] **`audit_tail` MCP tool (operator-only)** *(IN PROGRESS in PR #1 — skip)*: last N audit records, filterable by actor /
       outcome, so Claude can answer "what did Loyd do today?".
-- [ ] **Per-identity rate limit on MCP tool calls** (e.g. 60/min per user), audited as
+- [ ] **Per-identity rate limit on MCP tool calls** *(IN PROGRESS in PR #1 — skip)* (e.g. 60/min per user), audited as
       `outcome: "throttled"`, so a runaway client loop can't hammer Tokyo7.
 
 ## Needs a human
