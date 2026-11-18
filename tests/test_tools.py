@@ -127,3 +127,15 @@ def test_audit_rotates(monkeypatch, tmp_path):
     for _ in range(20):
         audit.record("t", "run_shell", {"command": "x" * 50}, "ok")
     assert (tmp_path / "a.jsonl.1").exists() and log.stat().st_size < 1000
+
+
+def test_audit_tail_filters_and_is_operator_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOYD_AUDIT_LOG", str(tmp_path / "a.jsonl"))
+    tools.execute_tool("run_shell", {"command": "echo ok"}, actor="mcp:geoff")
+    tools.execute_tool("write_file", {"path": "/x", "content": "y"}, actor="mcp:mate", readonly=True)
+    out = tools.execute_tool("audit_tail", {"lines": 10}, actor="cli:me")
+    assert "mcp:geoff" in out and "mcp:mate [ro]" in out and "-> denied" in out
+    only = tools.execute_tool("audit_tail", {"outcome": "denied"}, actor="cli:me")
+    assert "mcp:geoff" not in only and "mcp:mate" in only
+    assert tools.execute_tool("audit_tail", {}, actor="mcp:mate", readonly=True).startswith("DENIED")
+    assert "audit_tail" not in tools.WRITE_TOOLS                 # no y/N prompt: it changes nothing

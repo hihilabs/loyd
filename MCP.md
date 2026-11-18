@@ -169,6 +169,12 @@ returns at once; `job_output` reads it back with its exit code. Watch jobs live 
 `tmux -L loyd attach -t jobs`; logs are in `/tmp/loyd-jobs/`. `tmux_read` lets Loyd read
 a pane in *your* tmux sessions (read-only), e.g. "what's failing in dev:build?".
 
+## Rate limit and audit_tail
+
+Each identity gets `LOYD_MCP_RATE` tool calls per minute (default 60; `0` = off); extra calls
+return THROTTLED and are logged with outcome `throttled`. Operators can ask Loyd
+"what did Loyd do today?" through `audit_tail` (hidden from read-only tokens).
+
 ## Kits
 
 `LOYD_KITS=ops,netdiag,hihilabs` adds each kit's verified commands as tools named

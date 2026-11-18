@@ -64,7 +64,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # for — raise the trim limits unless the operator pinned them.
 os.environ.setdefault("LOYD_MAX_OUTPUT_CHARS", "20000")
 os.environ.setdefault("LOYD_MAX_OUTPUT_LINES", "400")
-from tools import TOOL_SCHEMAS, WRITE_TOOLS, execute_tool, where  # noqa: E402
+from tools import OPERATOR_TOOLS, TOOL_SCHEMAS, WRITE_TOOLS, execute_tool, where  # noqa: E402
+import audit                                                       # noqa: E402
 
 import anyio                                                       # noqa: E402
 import mcp.types as mt                                             # noqa: E402
@@ -109,8 +110,8 @@ def _tools_for(operator: bool):
     out = []
     for s in TOOL_SCHEMAS:
         f = s["function"]
-        if f["name"] in WRITE_TOOLS and not operator:
-            continue                                    # hide write tools from read-only users
+        if (f["name"] in WRITE_TOOLS or f["name"] in OPERATOR_TOOLS) and not operator:
+            continue                                    # hide write/operator tools from read-only users
         out.append(mt.Tool(
             name=f["name"], description=f.get("description", ""),
             inputSchema=f.get("parameters") or {"type": "object", "properties": {}}))
@@ -123,9 +124,34 @@ async def list_tools():
     return _tools_for(cur["operator"])
 
 
+# Per-identity rate limit on tool calls: a runaway client loop (or a stolen token)
+# can't hammer the target host. LOYD_MCP_RATE calls per 60 s per user (0 = off).
+RATE_PER_MIN = int(os.getenv("LOYD_MCP_RATE", "60"))
+_calls = {}                                        # user -> [timestamps]
+
+
+def _rate_limited(user):
+    if RATE_PER_MIN <= 0:
+        return False
+    now = time.time()
+    recent = [t for t in _calls.get(user, []) if now - t < 60]
+    if len(recent) >= RATE_PER_MIN:
+        _calls[user] = recent
+        return True
+    recent.append(now)
+    _calls[user] = recent
+    return False
+
+
 @server.call_tool()
 async def call_tool(name, arguments):
     cur = _current.get() or {"user": "?", "operator": False}
+    if _rate_limited(cur["user"]):
+        audit.record(f"mcp:{cur['user']}", name, arguments or {}, "throttled",
+                     readonly=not cur["operator"])
+        return [mt.TextContent(type="text", text=(
+            f"THROTTLED: more than {RATE_PER_MIN} tool calls in the last minute for {cur['user']}. "
+            "Wait a minute, then continue with fewer, broader calls."))]
     # readonly=True makes execute_tool deny write tools AND run run_shell/read_file
     # under read-only rules even when the server itself runs LOYD_MODE=operator —
     # without it a read-only token got the operator shell. Every call is audited.

@@ -26,11 +26,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       the conclude-guard on the last step, confirm/decline path — using a stub `/api/chat`.
 - [ ] **Tests for `cli.py`**: `should_confirm`, `handle_slash` (`/tools`, `/model`, `/audit`),
       `self_update` refusing on a detached HEAD.
-- [ ] **`audit_tail` MCP tool (operator-only)** *(IN PROGRESS in PR #1 — skip)*: last N audit records, filterable by actor /
-      outcome, so Claude can answer "what did Loyd do today?".
-- [ ] **Per-identity rate limit on MCP tool calls** *(IN PROGRESS in PR #1 — skip)* (e.g. 60/min per user), audited as
-      `outcome: "throttled"`, so a runaway client loop can't hammer Tokyo7.
-
 ## Needs a human
 
 - [ ] Optional: switch panel to the hardened `deploy/loyd-mcp.service` (review the paths first), then redeploy with `deploy/deploy.sh`.
@@ -52,6 +47,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] `audit_tail` (operator-only, filter by actor/outcome) and per-identity MCP rate limit (`LOYD_MCP_RATE`, default 60/min, throttles audited) — PR #1
 - [x] Trace recorder: `loydtrace.py` (`LOYD_TRACE_DIR`), `/good` `/bad` ratings in the CLI, `scripts/export_training.py` (local + rated-good only; Claude traces refused twice, incl. a tampered-file test) — PR #1
 - [x] Safe deploy codified: `deploy/deploy.sh <ref> [--dry-run]` (worktree, tests, spare-port smoke, scheduled restart + auto-rollback), tested end to end with a real smoke server and a forced rollback; hardened `deploy/loyd-mcp.service` example — PR #1
 - [x] Knowledge base: `kb.py` (`search_kb`, `read_kb`; BM25 over sections of kb/*.md + repo docs, stdlib, offline), seeded with the Tokyo7 stack map and outage/deploy runbooks — PR #1

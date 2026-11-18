@@ -95,6 +95,17 @@ TOOL_SCHEMAS = [
             "properties": {"name": {"type": "string", "description": "exact container name"}},
             "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "audit_tail",
+        "description": "Operators only. Recent entries from Loyd's own audit log: who ran which tool, when, "
+                       "and the outcome. Answers 'what did Loyd do today?' or 'what got refused?'.",
+        "parameters": {"type": "object",
+            "properties": {"lines": {"type": "integer", "description": "entries to show (default 20, max 200)"},
+                           "actor": {"type": "string", "description": "only this actor, e.g. mcp:geoff or cli:root"},
+                           "outcome": {"type": "string", "enum": ["", "ok", "denied", "refused", "error",
+                                                                  "declined", "throttled"],
+                                       "description": "only this outcome"}},
+            "required": []}}},
+    {"type": "function", "function": {
         "name": "run_in_tmux",
         "description": "Start a LONG-running shell command (build, backup, big docker pull, test suite) as a "
                        "background job in Loyd's own tmux server and return at once — use instead of run_shell "
@@ -148,6 +159,9 @@ TOOL_SCHEMAS = [
 
 # Tools that mutate state — the harness must get operator confirmation before running these.
 WRITE_TOOLS = {"write_file", "restart_container", "prune_images"}
+# Read-only but sensitive: operators only (hidden from and denied to read-only callers),
+# with no y/N prompt since nothing changes.
+OPERATOR_TOOLS = {"audit_tail"}
 
 # Mutating command binaries / patterns we refuse in read-only mode.
 _BLOCKED = re.compile(r"""(?xi)
@@ -406,6 +420,26 @@ def tmux_read(target: str = "", lines: int = 60, readonly: bool = False) -> str:
     return _cap((p.stdout or p.stderr or "(empty)").rstrip())
 
 
+def audit_tail(lines: int = 20, actor: str = "", outcome: str = "") -> str:
+    n = max(1, min(int(lines or 20), 200))
+    recs = audit.tail(5000)
+    if actor:
+        recs = [r for r in recs if r.get("actor") == actor]
+    if outcome:
+        recs = [r for r in recs if r.get("outcome") == outcome]
+    recs = recs[-n:]
+    if not recs:
+        return "No matching audit entries (or the audit log is off: LOYD_AUDIT_LOG)."
+    out = []
+    for r in recs:
+        args = ", ".join(f"{k}={v!r}" for k, v in (r.get("args") or {}).items())
+        if len(args) > 160:
+            args = args[:160] + "…"
+        ro = " [ro]" if r.get("readonly") else ""
+        out.append(f"{r.get('ts')}  {r.get('actor')}{ro}  {r.get('tool')}({args})  -> {r.get('outcome')}")
+    return _cap("\n".join(out))
+
+
 def write_file(path: str, content: str) -> str:
     """Writes on the host Loyd ACTS on — over SSH (content via stdin) when
     LOYD_REMOTE is set, so it lands on the same box run_shell/read_file see."""
@@ -470,6 +504,7 @@ _IMPL = {
     "run_shell": lambda a, ro: run_shell(a.get("command", ""), readonly=ro),
     "read_file": lambda a, ro: read_file(a.get("path", ""), a.get("max_lines"), readonly=ro),
     "get_container_status": lambda a, ro: get_container_status(a.get("name", "")),
+    "audit_tail": lambda a, ro: audit_tail(a.get("lines", 20), a.get("actor", ""), a.get("outcome", "")),
     "run_in_tmux": lambda a, ro: run_in_tmux(a.get("name", ""), a.get("command", ""), readonly=ro),
     "job_output": lambda a, ro: job_output(a.get("name", ""), a.get("lines", 50), readonly=ro),
     "tmux_read": lambda a, ro: tmux_read(a.get("target", ""), a.get("lines", 60), readonly=ro),
@@ -529,6 +564,8 @@ def execute_tool(name: str, args: dict, actor: str = "local", readonly: bool = F
         result = f"ERROR: tool arguments must be an object, got {type(args).__name__}"
     elif readonly and name in WRITE_TOOLS:
         result = f"DENIED: '{name}' is an operator-only write tool; {actor} is read-only."
+    elif readonly and name in OPERATOR_TOOLS:
+        result = f"DENIED: '{name}' is operator-only; {actor} is read-only."
     else:
         try:
             result = fn(args, bool(readonly))
