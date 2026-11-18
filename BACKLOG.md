@@ -8,11 +8,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **Trace recorder.** *(IN PROGRESS in PR #1 — skip)* Opt-in (`LOYD_TRACE_DIR`) full-session traces: task, each tool call
-      + result, final answer, and a `brain` tag (`claude` | `local` | `human`). The trace
-      format has a `trainable` flag that is ALWAYS false when `brain == "claude"` (Anthropic
-      terms: no Claude output as model-training data). Include a `tools/export_training.py`
-      that only exports `trainable: true` records and test that Claude records can't leak.
 - [ ] **Brain router.** `LOYD_BRAIN_POLICY=claude-first | local-first | auto`. `auto` asks the
       local model one yes/no question ("routine maintenance a kit covers, or research /
       open-ended?") and routes routine work local, research to Claude, with escalation to
@@ -57,6 +52,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Trace recorder: `loydtrace.py` (`LOYD_TRACE_DIR`), `/good` `/bad` ratings in the CLI, `scripts/export_training.py` (local + rated-good only; Claude traces refused twice, incl. a tampered-file test) — PR #1
 - [x] Safe deploy codified: `deploy/deploy.sh <ref> [--dry-run]` (worktree, tests, spare-port smoke, scheduled restart + auto-rollback), tested end to end with a real smoke server and a forced rollback; hardened `deploy/loyd-mcp.service` example — PR #1
 - [x] Knowledge base: `kb.py` (`search_kb`, `read_kb`; BM25 over sections of kb/*.md + repo docs, stdlib, offline), seeded with the Tokyo7 stack map and outage/deploy runbooks — PR #1
 - [x] `tail_logs` — covered by the `ops` kit's `ops_container_logs` (name + last N lines) — PR #1
