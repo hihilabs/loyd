@@ -24,13 +24,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
       when vision is idle or at night, never by pausing vision; `online` reverses it. Dry-run by default; container names come from config, not hardcoded.
       Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
-- [ ] **Codify the safe deploy** *(IN PROGRESS in PR #1 — skip)* as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
-      of the target ref → run `pytest` with the prod venv → start it on a spare port with the
-      prod env file and smoke-test `/healthz`, OAuth metadata, 401 on the MCP path → switch
-      `/opt/loyd` → schedule restart + health check with auto-rollback (what was done by hand
-      on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
-      (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
-      `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
       repeats a near-identical call before concluding. After a repeat is detected, drop the
       tools for the next step (force a text answer). Tests with a fake ollama server.
@@ -45,6 +38,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Needs a human
 
+- [ ] Optional: switch panel to the hardened `deploy/loyd-mcp.service` (review the paths first), then redeploy with `deploy/deploy.sh`.
 - [ ] For field audits: install nmap on the field device (laptop / Termux: `pkg install nmap dnsutils openssl-tool`), write the scope file from the client's written authorization, then `LOYD_KITS=...,audit`.
 - [ ] Install mosh on Tokyo7 (Unraid: un-get / NerdTools) so `mosh tokyo7 -- tmux new -A -s loyd loyd` works from the phone; Termux + Tailscale on the Samsung.
 - [ ] Verify the `hihilabs` kit commands (`kits/hihilabs.json`: container name, test runner, migrate) and set `LOYD_KITS=ops,hihilabs` on the MCP server against the real container/repo and flip
@@ -63,6 +57,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Safe deploy codified: `deploy/deploy.sh <ref> [--dry-run]` (worktree, tests, spare-port smoke, scheduled restart + auto-rollback), tested end to end with a real smoke server and a forced rollback; hardened `deploy/loyd-mcp.service` example — PR #1
 - [x] Knowledge base: `kb.py` (`search_kb`, `read_kb`; BM25 over sections of kb/*.md + repo docs, stdlib, offline), seeded with the Tokyo7 stack map and outage/deploy runbooks — PR #1
 - [x] `tail_logs` — covered by the `ops` kit's `ops_container_logs` (name + last N lines) — PR #1
 - [x] `audit` kit (`auditkit.py`): scope-file gate, discover/services (nmap, rate-limited), TLS, mail DNS, report; real-nmap test — PR #1

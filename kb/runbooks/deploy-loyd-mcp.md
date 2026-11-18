@@ -1,6 +1,8 @@
 <!-- source: claude -->
 # Runbook: deploy the Loyd MCP server on panel safely
 
+**Now scripted:** on panel, `/opt/loyd/deploy/deploy.sh <branch-or-commit>` does all of the steps below (`--dry-run` first to see them). Result: `tail -2 /root/loyd-deploy.log`.
+
 Used twice on 2026-11-18 (e7c9f73, then 08f19ec). The restart cuts the connection to Loyd for a few seconds, so the switch is scheduled, with automatic rollback.
 
 ## 1. Test a separate copy

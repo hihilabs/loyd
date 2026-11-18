@@ -187,6 +187,13 @@ the dates (see `audits/README.md`); targets outside it are refused before any pa
 is sent. Scans are write-class (operator-only, approved per call). Discovery and
 assessment only: no exploitation, credential guessing or interception.
 
+## Deploying updates
+
+On the MCP host: `deploy/deploy.sh <branch-or-commit>` (`--dry-run` to preview). It tests a
+separate copy, smoke-tests it on a spare port with the real config, then switches with a
+scheduled restart and a health check that rolls back automatically. See
+`kb/runbooks/deploy-loyd-mcp.md`; a hardened unit is in `deploy/loyd-mcp.service`.
+
 ## Users & tokens
 
 - One entry per person in `LOYD_MCP_TOKENS`; give each their own token.
