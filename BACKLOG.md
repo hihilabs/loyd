@@ -35,18 +35,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
       (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
       `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
-- [ ] **`audit` kit — authorized network audits only, scope-gated.** *(IN PROGRESS in PR #1 — skip)* Loads only when a scope
-      file `audits/<client>.json` exists: client, who authorized it, authorization reference,
-      allowed CIDRs + domains, start/expiry, intensity (`gentle` default). EVERY audit tool
-      refuses a target outside scope or after expiry, and every call is audited with the
-      scope id. Tools: host discovery, service/version inventory (nmap, rate-limited, top
-      ports by default), TLS check (cert expiry, old protocols), DNS + mail hygiene for the
-      client's domains (SPF/DKIM/DMARC), flags for exposed management services (RDP, SMB,
-      Telnet, UPnP, admin panels on default ports), and `audit_report` → findings markdown
-      with severity and a fix per finding. Explicitly NOT included: exploitation, credential
-      guessing, traffic interception, Wi-Fi attacks. Tests must prove out-of-scope and
-      expired scopes are refused. On a client site Loyd runs on the field device (laptop or
-      Termux in DeX) with `LOYD_REMOTE` unset, so it acts on that network.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
       repeats a near-identical call before concluding. After a repeat is detected, drop the
       tools for the next step (force a text answer). Tests with a fake ollama server.
@@ -64,6 +52,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Needs a human
 
+- [ ] For field audits: install nmap on the field device (laptop / Termux: `pkg install nmap dnsutils openssl-tool`), write the scope file from the client's written authorization, then `LOYD_KITS=...,audit`.
 - [ ] Install mosh on Tokyo7 (Unraid: un-get / NerdTools) so `mosh tokyo7 -- tmux new -A -s loyd loyd` works from the phone; Termux + Tailscale on the Samsung.
 - [ ] Verify the `hihilabs` kit commands (`kits/hihilabs.json`: container name, test runner, migrate) and set `LOYD_KITS=ops,hihilabs` on the MCP server against the real container/repo and flip
       `"verified": true` (first app-dev kit, chosen 2026-11-18).
@@ -81,6 +70,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] `audit` kit (`auditkit.py`): scope-file gate, discover/services (nmap, rate-limited), TLS, mail DNS, report; real-nmap test — PR #1
 - [x] Offline detection: one cached probe of the Claude API (120 s), mid-request network errors remembered, `LOYD_OFFLINE=1/0`, OFFLINE banner — PR #1
 - [x] tmux tools: `run_in_tmux` (Loyd's own `tmux -L loyd` server, run_shell's rules), `job_output`, `tmux_read` — live-tested on Tokyo7 — PR #1
 - [x] `netdiag` kit (11 read-only commands incl. layered `triage`), all run live on Tokyo7 2026-11-18 — PR #1

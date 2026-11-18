@@ -499,7 +499,19 @@ def _run_kit_command(line: str, timeout: int) -> str:
 
 
 import kits as _kits                                  # noqa: E402
-KITS = _kits.install(TOOL_SCHEMAS, _IMPL, WRITE_TOOLS, _run_kit_command)
+import auditkit as _auditkit                          # noqa: E402
+_SELECTED_KITS = _kits.selected()
+KITS = _kits.install(TOOL_SCHEMAS, _IMPL, WRITE_TOOLS, _run_kit_command,
+                     names=[k for k in _SELECTED_KITS if k != "audit"])
+
+
+def _audit_exec(cmd: str, timeout: int):
+    p = _exec(cmd, timeout=timeout)
+    return p.returncode, p.stdout or "", p.stderr or ""
+
+
+if "audit" in _SELECTED_KITS:                         # Python kit: scope logic can't be JSON
+    _auditkit.install(TOOL_SCHEMAS, _IMPL, WRITE_TOOLS, _audit_exec, _cap)
 
 
 def execute_tool(name: str, args: dict, actor: str = "local", readonly: bool = False) -> str:

@@ -180,7 +180,12 @@ offered until someone checks them against the real system.
 Shipped kits: `ops` (disk, memory, GPUs, containers, logs), `netdiag` (ping, trace,
 DNS lookup/compare, port, HTTP, TLS cert, interfaces, neighbours, listening sockets,
 and `netdiag_triage`: gateway → DNS → internet → one service, stopping at the first
-layer that fails), `hihilabs` (skeleton, unverified).
+layer that fails), `hihilabs` (skeleton, unverified), and `audit` (`auditkit.py`):
+authorized network audits only. Every audit tool refuses to run without a scope file
+in `audits/` naming the client, who authorized it, the allowed ranges and domains and
+the dates (see `audits/README.md`); targets outside it are refused before any packet
+is sent. Scans are write-class (operator-only, approved per call). Discovery and
+assessment only: no exploitation, credential guessing or interception.
 
 ## Users & tokens
 
