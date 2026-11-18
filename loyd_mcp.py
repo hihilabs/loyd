@@ -60,6 +60,10 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Full Claude on the other end can digest far more than the local 7B the CLI caps
+# for — raise the trim limits unless the operator pinned them.
+os.environ.setdefault("LOYD_MAX_OUTPUT_CHARS", "20000")
+os.environ.setdefault("LOYD_MAX_OUTPUT_LINES", "400")
 from tools import TOOL_SCHEMAS, WRITE_TOOLS, execute_tool, where  # noqa: E402
 
 import anyio                                                       # noqa: E402
@@ -122,11 +126,13 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name, arguments):
     cur = _current.get() or {"user": "?", "operator": False}
-    if name in WRITE_TOOLS and not cur["operator"]:
-        return [mt.TextContent(type="text",
-                text=f"DENIED: '{name}' is an operator-only write tool; {cur['user']} is read-only.")]
+    # readonly=True makes execute_tool deny write tools AND run run_shell/read_file
+    # under read-only rules even when the server itself runs LOYD_MODE=operator —
+    # without it a read-only token got the operator shell. Every call is audited.
+    actor, ro = f"mcp:{cur['user']}", not cur["operator"]
     # execute_tool is blocking (subprocess/SSH) — run off the event loop
-    result = await anyio.to_thread.run_sync(lambda: execute_tool(name, arguments or {}))
+    result = await anyio.to_thread.run_sync(
+        lambda: execute_tool(name, arguments or {}, actor=actor, readonly=ro))
     return [mt.TextContent(type="text", text=result)]
 
 
@@ -463,7 +469,7 @@ button:hover{{background:#8f80f9}}
   <form method="post">
     <label for="token">Loyd Access Token</label>
     <input type="password" id="token" name="token" autofocus autocomplete="off" required>
-    <label class="ro"><input type="checkbox" name="readonly" value="1"> Read-only (hide write tools for this connection)</label>
+    <label class="ro"><input type="checkbox" name="readonly" value="1"> Read-only (no write tools; read-only shell)</label>
     <input type="hidden" name="params" value="{params}">
     <button type="submit">Authorize</button>
   </form>

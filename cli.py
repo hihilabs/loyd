@@ -16,11 +16,14 @@ REPL slash commands:
   /claude <q>   force one question onto cloud Claude (the default anyway)
   /model [name] show or hot-swap the local brain
   /tools        list the tools Loyd can call
+  /audit [n]    show the last n tool calls (who/what/outcome)
   /help         this help
   /exit         quit
 (`loyd "/claude ..."` also works as a one-shot.)
 """
 import argparse
+import functools
+import getpass
 import os
 import subprocess
 import sys
@@ -29,6 +32,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
 from claude_backend import ClaudeAgent, ClaudeUnavailable   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
+import audit                                       # noqa: E402
+
+try:
+    _ACTOR = f"cli:{getpass.getuser()}"
+except Exception:
+    _ACTOR = "cli:?"
+run_tool = functools.partial(execute_tool, actor=_ACTOR)   # every CLI tool call is audited
 
 
 def should_confirm(name, args):
@@ -69,6 +79,7 @@ def make_printer():
             print(f"{DIM}{preview}{RST}")
         elif kind == "tool_declined":
             print(f"{RED}✗ declined: {data['name']}{RST}")
+            audit.record(_ACTOR, data["name"], data.get("args"), "declined")
         elif kind == "final":
             print(f"{GREEN}{data['text']}{RST}")
         elif kind == "error":
@@ -87,7 +98,7 @@ class Session:
         self._system = build_system(where(), mode())
         self.agent = LoydAgent(
             model=model, ollama_url=url, system=self._system,
-            tool_schemas=TOOL_SCHEMAS, execute=execute_tool,
+            tool_schemas=TOOL_SCHEMAS, execute=run_tool,
             max_iters=max_iters, on_event=self.printer,
             confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         self._claude = None
@@ -96,7 +107,7 @@ class Session:
         if self._claude is None:
             self._claude = ClaudeAgent(
                 model=self.claude_model, api_key=os.getenv("ANTHROPIC_API_KEY"),
-                tool_schemas=TOOL_SCHEMAS, execute=execute_tool, system=self._system,
+                tool_schemas=TOOL_SCHEMAS, execute=run_tool, system=self._system,
                 max_iters=self.max_iters, on_event=self.printer,
                 confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         return self._claude
@@ -155,6 +166,7 @@ def handle_slash(q, sess):
               f"/claude <q>  force cloud Claude (same tools)\n"
               f"/model [name] show or swap the local brain\n"
               f"/update       git-pull the latest Loyd and reload\n"
+              f"/audit [n]    show the last n tool calls from the audit log\n"
               f"/tools        list callable tools\n"
               f"/exit         quit{RST}")
     elif cmd == "/tools":
@@ -180,6 +192,16 @@ def handle_slash(q, sess):
             print(f"{DIM}usage: /claude <question>{RST}")
     elif cmd == "/update":
         self_update()
+    elif cmd == "/audit":
+        n = int(rest) if rest.isdigit() else 20
+        recs = audit.tail(n)
+        if not recs:
+            print(f"{DIM}audit log empty or off (LOYD_AUDIT_LOG){RST}")
+        for r in recs:
+            col = GREEN if r.get("outcome") == "ok" else RED
+            args = ", ".join(f"{k}={v!r}" for k, v in (r.get("args") or {}).items())
+            print(f"{DIM}{r.get('ts')} {r.get('actor')}{RST} {CYAN}{r.get('tool')}{RST}"
+                  f"({args[:120]}) {col}{r.get('outcome')}{RST}")
     elif cmd in ("/exit", "/quit", "/q"):
         return "exit"
     else:

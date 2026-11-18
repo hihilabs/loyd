@@ -15,10 +15,16 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
-MAX_OUTPUT_CHARS = 2500   # cap tool output so a small model isn't flooded
-MAX_OUTPUT_LINES = 50
+import audit
+
+# Cap tool output so a small model isn't flooded. Head AND tail are kept (errors
+# and summaries live at the end). The MCP server raises these — full Claude can
+# take much more. Override with LOYD_MAX_OUTPUT_CHARS / LOYD_MAX_OUTPUT_LINES.
+MAX_OUTPUT_CHARS = int(os.getenv("LOYD_MAX_OUTPUT_CHARS", "2500"))
+MAX_OUTPUT_LINES = int(os.getenv("LOYD_MAX_OUTPUT_LINES", "50"))
 SHELL_TIMEOUT_S  = 30
 
 # Where tools ACT. Empty = this machine. Set LOYD_REMOTE="root@HOST" (+
@@ -27,6 +33,10 @@ SHELL_TIMEOUT_S  = 30
 # it's chosen by OLLAMA_URL, so you can think on one GPU and act on another host.
 _REMOTE      = os.getenv("LOYD_REMOTE", "").strip()
 _REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()
+# Optional OS-enforced read-only path: an unprivileged SSH login (no sudo, not in
+# the docker group) that read-only callers' run_shell/read_file go through. The
+# regex denylist is best-effort; this is the real boundary. See MCP.md.
+_REMOTE_RO   = os.getenv("LOYD_REMOTE_READONLY", "").strip()
 
 # Capability mode. "readonly" (default): run_shell refuses every mutating command
 # (see _BLOCKED); state changes go only through confirm-gated WRITE_TOOLS.
@@ -37,18 +47,20 @@ _REMOTE_PORT = os.getenv("LOYD_REMOTE_PORT", "22").strip()
 _MODE = os.getenv("LOYD_MODE", "readonly").strip().lower()
 
 
-def _exec(command: str):
+def _exec(command: str, input: str = None, ro: bool = False):
     """Run a bash command locally, or on LOYD_REMOTE via SSH when set.
     Uses a NON-login shell (bash -c): login shells (-l) source /etc/profile +
     ~/.bash_profile, which on managed hosts print banners (e.g. Plesk) that
     pollute tool output — and give no benefit here since docker/standard tools
     are on the default PATH."""
-    if _REMOTE:
+    target = _REMOTE_RO if (ro and _REMOTE_RO) else _REMOTE
+    if target:
         full = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                "-p", _REMOTE_PORT, _REMOTE, f"bash -c {shlex.quote(command)}"]
+                "-p", _REMOTE_PORT, target, f"bash -c {shlex.quote(command)}"]
     else:
         full = ["bash", "-c", command]
-    return subprocess.run(full, capture_output=True, text=True, timeout=SHELL_TIMEOUT_S)
+    return subprocess.run(full, capture_output=True, text=True, timeout=SHELL_TIMEOUT_S,
+                          input=input)
 
 
 def where() -> str:
@@ -118,8 +130,21 @@ _BLOCKED = re.compile(r"""(?xi)
         kill|pkill|killall|reboot|shutdown|halt|poweroff|init|
         systemctl|service|mount|umount|fdisk|parted|wipefs|sfdisk|
         apt|apt-get|yum|dnf|pacman|pip|pip3|npm|yarn|make|
-        mkdir|touch|install|useradd|userdel|passwd|crontab|sysctl
+        mkdir|touch|install|useradd|userdel|passwd|crontab|sysctl|
+        cp|rsync|scp|sftp|wget|unzip|patch|eval|exec|source|sudo|su|doas|nohup
     )([\s;&|)]|$)
+  # inline code: an interpreter running a -c/-e string or a heredoc/stdin can do
+  # anything the denylist forbids (python3 -c "open(p,'w')"), so refuse them all
+  | \b(python[0-9.]*|perl|ruby|node|nodejs|php|lua|bash|sh|zsh|dash|ksh|awk|gawk|osascript)\b
+      [^\n;&|]*\s(-c|-e|-E|-r|--eval|-)(\s|$)
+  | \b(python[0-9.]*|perl|ruby|node|php|bash|sh|zsh)\s*<<
+  | \|\s*(python[0-9.]*|perl|ruby|node|php|bash|sh|zsh|dash|ksh)\b
+  | \bawk\b[^\n]*\b(system|print\s*>)
+  | \bcurl\b[^\n;&|]*\s(-o|-O|--output|--remote-name|-T|--upload-file|-X\s*(POST|PUT|DELETE|PATCH)|-d|--data\S*)\b
+  | \bfind\b[^\n;&|]*\s-(delete|exec|execdir|ok|fprint\w*)\b
+  | \bxargs\b
+  | \btar\s+-?[a-z]*[xcru]           # extract/create/append/update (t = list is fine)
+  | \bgit\s+(apply|am|restore|switch|worktree|config|gc|prune|update-ref|submodule)\b
   # docker: refuse ANY mutating verb anywhere after `docker` (up to a shell
   # separator), so `docker image prune`, `docker system prune -a -f`, `docker rmi`,
   # `docker container rm`, `docker builder prune`, etc. are all caught — not just the
@@ -158,19 +183,31 @@ def is_destructive(command: str) -> bool:
 
 
 def _cap(s: str) -> str:
+    """Trim to MAX_OUTPUT_LINES / MAX_OUTPUT_CHARS keeping ~2/3 head + ~1/3 tail,
+    so the end of a log / the error at the bottom of a build survives."""
     lines = s.split("\n")
     if len(lines) > MAX_OUTPUT_LINES:
-        s = "\n".join(lines[:MAX_OUTPUT_LINES]) + f"\n... [truncated, {len(lines) - MAX_OUTPUT_LINES} more lines]"
+        head = max(1, MAX_OUTPUT_LINES * 2 // 3)
+        tail = max(1, MAX_OUTPUT_LINES - head)
+        s = "\n".join(lines[:head]
+                      + [f"... [{len(lines) - head - tail} lines omitted — narrow with grep/head/tail] ..."]
+                      + lines[-tail:])
     if len(s) > MAX_OUTPUT_CHARS:
-        s = s[:MAX_OUTPUT_CHARS] + f"\n... [truncated, {len(s) - MAX_OUTPUT_CHARS} more chars]"
+        head = MAX_OUTPUT_CHARS * 2 // 3
+        tail = MAX_OUTPUT_CHARS - head
+        s = s[:head] + f"\n... [{len(s) - head - tail} chars omitted] ...\n" + s[-tail:]
     return s
 
 
-def run_shell(command: str) -> str:
+def run_shell(command: str, readonly: bool = False) -> str:
+    """readonly=True forces read-only rules for THIS call even if the server runs in
+    operator mode (an MCP read-only token, an OAuth grant scoped read-only). It can
+    only restrict: a readonly-mode server never runs operator rules."""
     command = (command or "").strip()
     if not command:
         return "ERROR: empty command."
-    if _MODE == "operator":
+    ro = readonly or _MODE != "operator"
+    if not ro:
         if _CATASTROPHIC.search(command):
             return ("REFUSED: this is a catastrophic, irreversible command (disk wipe, "
                     "system-root delete, or power-off). Loyd never runs it, even in operator "
@@ -181,7 +218,7 @@ def run_shell(command: str) -> str:
                 "read-only mode. Set LOYD_MODE=operator to allow changes (destructive ones "
                 "still prompt for confirmation), or use a confirm-gated write tool.")
     try:
-        p = _exec(command)
+        p = _exec(command, ro=ro)
     except subprocess.TimeoutExpired:
         return f"ERROR: command timed out after {SHELL_TIMEOUT_S}s."
     except Exception as e:
@@ -194,16 +231,18 @@ def run_shell(command: str) -> str:
     return _cap(out.rstrip())
 
 
-def read_file(path: str, max_lines: int = None) -> str:
-    if _REMOTE:
-        cmd = (f"head -n {int(max_lines)} {shlex.quote(path)}"
-               if max_lines and max_lines > 0 else f"cat {shlex.quote(path)}")
+def read_file(path: str, max_lines: int = None, readonly: bool = False) -> str:
+    ro = readonly or _MODE != "operator"
+    target = _REMOTE_RO if (ro and _REMOTE_RO) else _REMOTE
+    if target:
+        cmd = (f"head -n {int(max_lines)} -- {shlex.quote(path)}"
+               if max_lines and max_lines > 0 else f"cat -- {shlex.quote(path)}")
         try:
-            p = _exec(cmd)
+            p = _exec(cmd, ro=ro)
         except Exception as e:
-            return f"ERROR reading {path} on {_REMOTE}: {type(e).__name__}: {e}"
+            return f"ERROR reading {path} on {target}: {type(e).__name__}: {e}"
         if p.returncode != 0:
-            return f"ERROR reading {path} on {_REMOTE}: {p.stderr.strip()}"
+            return f"ERROR reading {path} on {target}: {p.stderr.strip()}"
         return _cap(p.stdout)
     try:
         pth = Path(path)
@@ -261,6 +300,21 @@ def get_container_status(name: str) -> str:
 
 
 def write_file(path: str, content: str) -> str:
+    """Writes on the host Loyd ACTS on — over SSH (content via stdin) when
+    LOYD_REMOTE is set, so it lands on the same box run_shell/read_file see."""
+    content = content if content is not None else ""
+    if _REMOTE:
+        q = shlex.quote(path)
+        cmd = (f"mkdir -p -- \"$(dirname -- {q})\" && "
+               f"if [ -e {q} ]; then echo Overwrote; else echo Created; fi && cat > {q}")
+        try:
+            p = _exec(cmd, input=content)
+        except Exception as e:
+            return f"ERROR writing {path} on {_REMOTE}: {type(e).__name__}: {e}"
+        if p.returncode != 0:
+            return f"ERROR writing {path} on {_REMOTE}: {p.stderr.strip() or p.stdout.strip()}"
+        verb = (p.stdout.strip().splitlines() or ["Wrote"])[0]
+        return f"{verb} {path} on {_REMOTE} ({len(content)} chars)."
     try:
         pth = Path(path)
         pth.parent.mkdir(parents=True, exist_ok=True)
@@ -306,22 +360,32 @@ def prune_images(scope: str = "dangling") -> str:
 
 
 _IMPL = {
-    "run_shell": lambda a: run_shell(a.get("command", "")),
-    "read_file": lambda a: read_file(a.get("path", ""), a.get("max_lines")),
-    "get_container_status": lambda a: get_container_status(a.get("name", "")),
-    "write_file": lambda a: write_file(a.get("path", ""), a.get("content", "")),
-    "restart_container": lambda a: restart_container(a.get("name", "")),
-    "prune_images": lambda a: prune_images(a.get("scope", "dangling")),
+    "run_shell": lambda a, ro: run_shell(a.get("command", ""), readonly=ro),
+    "read_file": lambda a, ro: read_file(a.get("path", ""), a.get("max_lines"), readonly=ro),
+    "get_container_status": lambda a, ro: get_container_status(a.get("name", "")),
+    "write_file": lambda a, ro: write_file(a.get("path", ""), a.get("content", "")),
+    "restart_container": lambda a, ro: restart_container(a.get("name", "")),
+    "prune_images": lambda a, ro: prune_images(a.get("scope", "dangling")),
 }
 
 
-def execute_tool(name: str, args: dict) -> str:
+def execute_tool(name: str, args: dict, actor: str = "local", readonly: bool = False) -> str:
+    """Dispatch a tool call and audit it. `actor` is who asked (e.g. "mcp:alice",
+    "cli:root"); readonly=True denies write tools and forces read-only shell rules
+    for this call regardless of LOYD_MODE."""
+    t0 = time.time()
     fn = _IMPL.get(name)
     if not fn:
-        return f"ERROR: unknown tool '{name}'. Available: {', '.join(_IMPL)}"
-    if not isinstance(args, dict):
-        return f"ERROR: tool arguments must be an object, got {type(args).__name__}"
-    try:
-        return fn(args)
-    except Exception as e:
-        return f"ERROR in tool {name}: {type(e).__name__}: {e}"
+        result = f"ERROR: unknown tool '{name}'. Available: {', '.join(_IMPL)}"
+    elif not isinstance(args, dict):
+        result = f"ERROR: tool arguments must be an object, got {type(args).__name__}"
+    elif readonly and name in WRITE_TOOLS:
+        result = f"DENIED: '{name}' is an operator-only write tool; {actor} is read-only."
+    else:
+        try:
+            result = fn(args, bool(readonly))
+        except Exception as e:
+            result = f"ERROR in tool {name}: {type(e).__name__}: {e}"
+    audit.record(actor, name, args if isinstance(args, dict) else {"_raw": repr(args)},
+                 audit.outcome_of(result), len(result), time.time() - t0, readonly)
+    return result

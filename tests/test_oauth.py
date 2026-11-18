@@ -213,3 +213,25 @@ def test_redirect_preserves_existing_query(m):
     _, ch = _pkce()
     r = _authorize(m, cid, OP, ch, redirect=uri)
     assert r.headers["location"].startswith("https://app.example/cb?x=1&code=")
+
+
+def _call(m, bearer, name, args):
+    r = m.client.post("/mcp/", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                     "params": {"name": name, "arguments": args}},
+                      headers={**MCP_HDRS, "Authorization": f"Bearer {bearer}"})
+    assert r.status_code == 200, r.text
+    return r.json()["result"]["content"][0]["text"]
+
+
+def test_readonly_token_gets_readonly_shell_on_operator_server(m, monkeypatch, tmp_path):
+    """Regression: with LOYD_MODE=operator, a read-only token used to get the full
+    operator shell through run_shell (only the write tools were hidden)."""
+    import tools
+    monkeypatch.setattr(tools, "_MODE", "operator")
+    f = tmp_path / "pwned"
+    assert _call(m, RO, "run_shell", {"command": f"touch {f}"}).startswith("REFUSED")
+    _, tok = _full_flow(m, readonly=True)             # operator token, Read-only ticked
+    assert _call(m, tok["access_token"], "run_shell", {"command": f"touch {f}"}).startswith("REFUSED")
+    assert not f.exists()
+    _call(m, OP, "run_shell", {"command": f"touch {f}"})
+    assert f.exists()
