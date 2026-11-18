@@ -45,6 +45,31 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
       (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
       `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
+- [ ] **tmux tools.** `run_in_tmux(name, command)` starts a long job (build, backup,
+      `docker pull`) in a named detached tmux window and returns at once, beating
+      `run_shell`'s 30 s timeout; `tmux_read(target, lines)` captures a pane's recent output
+      (read-only) so "what's failing in my build pane?" works. Writes go through the
+      operator/confirm/audit path like any write tool; window names validated.
+- [ ] **`netdiag` kit (read-only troubleshooting)**, acting wherever Loyd runs: `net_ping`
+      (count ≤ 10), `net_trace`, `net_dns` (name, type, optional server — compare the router's
+      answer with 1.1.1.1 to spot split-DNS issues), `net_port` (TCP connect test),
+      `net_http` (status, timing, cert expiry), `net_iface` (addresses, routes, gateway, DNS
+      servers), `net_neighbors` (ARP/neighbour table), `whats_listening` (local listening
+      sockets). Plus a **"something's out" playbook**: gateway → DNS → internet → each HiHi
+      service, stopping at the first failure and saying which layer broke. Inputs validated
+      (hostnames/IPs only), counts and timeouts capped.
+- [ ] **`audit` kit — authorized network audits only, scope-gated.** Loads only when a scope
+      file `audits/<client>.json` exists: client, who authorized it, authorization reference,
+      allowed CIDRs + domains, start/expiry, intensity (`gentle` default). EVERY audit tool
+      refuses a target outside scope or after expiry, and every call is audited with the
+      scope id. Tools: host discovery, service/version inventory (nmap, rate-limited, top
+      ports by default), TLS check (cert expiry, old protocols), DNS + mail hygiene for the
+      client's domains (SPF/DKIM/DMARC), flags for exposed management services (RDP, SMB,
+      Telnet, UPnP, admin panels on default ports), and `audit_report` → findings markdown
+      with severity and a fix per finding. Explicitly NOT included: exploitation, credential
+      guessing, traffic interception, Wi-Fi attacks. Tests must prove out-of-scope and
+      expired scopes are refused. On a client site Loyd runs on the field device (laptop or
+      Termux in DeX) with `LOYD_REMOTE` unset, so it acts on that network.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
       repeats a near-identical call before concluding. After a repeat is detected, drop the
       tools for the next step (force a text answer). Tests with a fake ollama server.
