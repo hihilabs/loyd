@@ -10,6 +10,7 @@ A self-hosted dev/ops assistant for the hihilabs stack (Tokyo7 + the VPS). Loyd 
 | `loyd_mcp.py` | The same tools over remote MCP, with OAuth, for claude.ai / the Claude apps / Desktop / VS Code. |
 | `audit.py` | One JSON line per tool call: who, what, outcome. |
 | `kb.py` + `kb/` | Notes and runbooks Loyd searches (`search_kb`, `read_kb`) — how the stack is wired, past fixes, procedures. Works offline. Add a note: drop a `.md` in `kb/` with `<!-- source: human -->` on line 1. |
+| `loydtrace.py` | Opt-in traces (`LOYD_TRACE_DIR`) of each answer for evaluation; rate with `/good` `/bad`. `scripts/export_training.py` exports only local-model answers a person rated good — never Claude output. |
 | `auditkit.py` | Scope-gated network audit tools for authorized client audits (`audits/README.md`). |
 | `kits.py` + `kits/*.json` | Declarative tool kits: vetted commands with validated params, per project (`LOYD_KITS=ops,hihilabs`). Write commands are confirm-gated; unverified commands stay hidden. |
 

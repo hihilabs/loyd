@@ -240,3 +240,20 @@ def test_readonly_token_gets_readonly_shell_on_operator_server(m, monkeypatch, t
 def test_healthz_is_public_and_quiet(m):
     r = m.client.get("/healthz")
     assert r.status_code == 200 and r.json() == {"ok": True}
+
+
+def test_audit_tail_hidden_from_readonly_tokens(m):
+    assert "audit_tail" in _tools(m, OP)
+    assert "audit_tail" not in _tools(m, RO)
+
+
+def test_rate_limit_per_identity(m, monkeypatch, tmp_path):
+    monkeypatch.setattr(m, "RATE_PER_MIN", 3)
+    monkeypatch.setattr(m, "_calls", {})
+    monkeypatch.setenv("LOYD_AUDIT_LOG", str(tmp_path / "a.jsonl"))
+    outs = [_call(m, OP, "read_file", {"path": "/etc/hostname"}) for _ in range(4)]
+    assert not any(o.startswith("THROTTLED") for o in outs[:3]) and outs[3].startswith("THROTTLED")
+    assert not _call(m, RO, "read_file", {"path": "/etc/hostname"}).startswith("THROTTLED")   # per user
+    import json
+    recs = [json.loads(l) for l in (tmp_path / "a.jsonl").read_text().splitlines()]
+    assert [r["outcome"] for r in recs].count("throttled") == 1

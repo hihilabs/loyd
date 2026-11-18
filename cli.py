@@ -17,6 +17,7 @@ REPL slash commands:
   /model [name] show or hot-swap the local brain
   /tools        list the tools Loyd can call
   /audit [n]    show the last n tool calls (who/what/outcome)
+  /good, /bad   rate the last answer (only local-model answers rated good can be exported for training)
   /help         this help
   /exit         quit
 (`loyd "/claude ..."` also works as a one-shot.)
@@ -33,6 +34,7 @@ from loyd_core import LoydAgent, build_system     # noqa: E402
 from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online_status   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
 import audit                                       # noqa: E402
+import loydtrace as _trace                             # noqa: E402
 
 try:
     _ACTOR = f"cli:{getpass.getuser()}"
@@ -102,6 +104,23 @@ class Session:
             max_iters=max_iters, on_event=self.printer,
             confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         self._claude = None
+        self.last_trace = None
+
+    def _traced(self, agent, brain, model, q):
+        """Run agent on q, recording a trace when LOYD_TRACE_DIR is set."""
+        if not _trace.trace_dir():
+            return agent.run(q)
+        t = _trace.Tracer(brain, model, q, actor=_ACTOR)
+        agent.on_event = _trace.chain(self.printer, t.on_event)
+        try:
+            return agent.run(q)
+        except Exception as e:
+            t.abort(f"{type(e).__name__}: {e}")
+            raise
+        finally:
+            agent.on_event = self.printer
+            if t.written:
+                self.last_trace = t.rec["id"]
 
     def claude(self):
         if self._claude is None:
@@ -113,12 +132,12 @@ class Session:
         return self._claude
 
     def ask_local(self, q):
-        self.agent.run(q)
+        self._traced(self.agent, "local", self.agent.model, q)
 
     def ask_claude(self, q):
         key = "set" if os.getenv("ANTHROPIC_API_KEY") else "MISSING"
         print(f"{DIM}↑ {self.claude_model} (key {key}){RST}", file=sys.stderr)
-        self.claude().run(q)
+        self._traced(self.claude(), "claude", self.claude_model, q)
 
     def ask(self, q):
         """The default path: Claude, with the local brain picking up slack.
@@ -173,6 +192,7 @@ def handle_slash(q, sess):
               f"/model [name] show or swap the local brain\n"
               f"/update       git-pull the latest Loyd and reload\n"
               f"/audit [n]    show the last n tool calls from the audit log\n"
+              f"/good, /bad   rate the last answer (traces: LOYD_TRACE_DIR)\n"
               f"/tools        list callable tools\n"
               f"/exit         quit{RST}")
     elif cmd == "/tools":
@@ -198,6 +218,14 @@ def handle_slash(q, sess):
             print(f"{DIM}usage: /claude <question>{RST}")
     elif cmd == "/update":
         self_update()
+    elif cmd in ("/good", "/bad"):
+        if not _trace.trace_dir():
+            print(f"{DIM}tracing is off — set LOYD_TRACE_DIR to record and rate answers{RST}")
+        elif not sess.last_trace:
+            print(f"{DIM}no traced answer yet in this session{RST}")
+        else:
+            _trace.review(sess.last_trace, cmd[1:])
+            print(f"{DIM}rated {sess.last_trace} {cmd[1:]}{RST}")
     elif cmd == "/audit":
         n = int(rest) if rest.isdigit() else 20
         recs = audit.tail(n)
