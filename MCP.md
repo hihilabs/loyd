@@ -114,6 +114,53 @@ Knobs: `LOYD_MCP_ACCESS_TTL` (s, default 3600), `LOYD_MCP_REFRESH_TTL` (default 
 `LOYD_MCP_OAUTH_SECRET` (optional; signs client_ids — default is derived from the token
 set, so changing tokens makes clients re-register, which they do automatically).
 
+## Read-only callers get a read-only shell
+
+A read-only token (`r`), or any OAuth connection with *Read-only* ticked, runs
+`run_shell` under the read-only rules **even when the server runs `LOYD_MODE=operator`**,
+and write tools are refused. (Before this, read-only only hid the write tools and
+`run_shell` followed the server's mode.)
+
+The rules are a regex denylist — they now also catch interpreter one-liners
+(`python3 -c`, `perl -e`, `| bash`, heredocs), `cp`/`rsync`/`wget`, `curl -o`/`-X POST`,
+`find -delete/-exec`, `xargs`, `tar x/c`, `sudo` — but a denylist is never a sandbox.
+**For a real boundary, give read-only callers their own unprivileged login:**
+
+```bash
+# on the target host (e.g. Tokyo7)
+useradd -m -s /bin/bash loyd-ro          # no sudo, NOT in the docker group
+install -d -m 700 -o loyd-ro ~loyd-ro/.ssh
+cat ~/.ssh/id_ed25519.pub >> ~loyd-ro/.ssh/authorized_keys   # the MCP host's key
+chown loyd-ro ~loyd-ro/.ssh/authorized_keys
+
+# on the MCP host
+export LOYD_REMOTE_READONLY=loyd-ro@tokyo7
+```
+
+Read-only `run_shell`/`read_file` then go through `loyd-ro`, so the OS refuses any
+write the regex misses. Operators keep using `LOYD_REMOTE`. (`get_container_status`
+stays on the main login: it's a fixed `docker inspect`, and docker access is root.)
+
+## Audit log
+
+Every tool call — MCP and CLI — appends one JSON line to `LOYD_AUDIT_LOG`
+(default `~/.loyd/audit.jsonl`, mode 600; `off` disables): time, actor
+(`mcp:<user>` / `cli:<login>`), tool, args, outcome (`ok`/`denied`/`refused`/`error`/
+`declined`), read-only flag, result size, duration. `write_file` bodies are logged
+as length + hash, not content. In the CLI, `/audit [n]` shows the tail.
+
+```bash
+jq -c 'select(.outcome!="ok")' ~/.loyd/audit.jsonl     # everything refused/denied/failed
+jq -r .actor ~/.loyd/audit.jsonl | sort | uniq -c       # who's using Loyd
+```
+
+## Output size
+
+Long output keeps the first ~2/3 and last ~1/3 (so the error at the bottom of a build
+log survives), with an "N lines omitted" marker. The CLI caps at 50 lines / 2.5k chars
+for the local 7B; the MCP server defaults to 400 lines / 20k chars for full Claude.
+Tune with `LOYD_MAX_OUTPUT_LINES` / `LOYD_MAX_OUTPUT_CHARS`.
+
 ## Users & tokens
 
 - One entry per person in `LOYD_MCP_TOKENS`; give each their own token.
@@ -126,7 +173,8 @@ set, so changing tokens makes clients re-register, which they do automatically).
 - **Tested here:** server auth (401 on bad token), operator scoping (read-only can't
   see/run writes), real tool execution over MCP (`get_container_status` returned live
   state), stateless streamable-HTTP round-trip with the official MCP client.
-- **OAuth:** `pytest tests/` (18 cases: full flow, read-only scoping, refresh rotation +
+- **CI:** GitHub Actions runs `pytest tests/` on 3.11–3.13 for every push and PR.
+- **OAuth:** `pytest tests/` (19 cases: full flow, read-only scoping, refresh rotation +
   client binding, PKCE, single-use codes, redirect validation, tampering, rotation
   revokes, expiry, throttle), plus an end-to-end run with the official MCP SDK's
   `OAuthClientProvider` (discover → register → consent → token → `tools/call`).

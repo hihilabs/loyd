@@ -54,5 +54,11 @@ plan as prose ("Call `get_container_status`…") and asked to continue — did n
 
 ## Known rough edges (next iteration)
 - Occasional redundant double tool-call before concluding.
-- Huge tool outputs (`docker ps -a`) flood a small model's context — needs smarter trimming.
-- `run_shell` read-only guard is best-effort (denylist), not a sandbox.
+- ~~Huge tool outputs flood a small model's context~~ — head+tail trimming with an
+  omitted-lines marker (2026-11); MCP gets larger caps since full Claude reads it.
+- `run_shell` read-only guard is still a denylist (now much wider), but read-only
+  callers can be routed to an unprivileged SSH login (`LOYD_REMOTE_READONLY`) for an
+  OS-enforced boundary. See MCP.md.
+- **Fixed 2026-11:** read-only MCP tokens got the operator shell when the server ran
+  `LOYD_MODE=operator` (only write tools were hidden). `write_file` ignored
+  `LOYD_REMOTE` and wrote on the MCP host instead of the target.
