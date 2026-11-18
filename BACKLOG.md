@@ -30,6 +30,12 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       open-ended?") and routes routine work local, research to Claude, with escalation to
       Claude if the local run fails or hits the step limit. Default stays `claude-first`
       (policy 2026-09-04) until a human flips it.
+- [ ] **GPU modes: `online` / `offline` profiles** (`tools/gpu_mode.sh` + an operator-only,
+      confirm-gated tool). `online`: vision owns both GPUs; local Loyd model loads on demand
+      with a short ollama keep-alive so it never camps on VRAM. `offline`: pause the vision
+      workers (queue, don't drop), load the big local model across both cards; `online`
+      reverses it. Dry-run by default; container names come from config, not hardcoded.
+      Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
 - [ ] **Offline detection.** Probe the Claude API once, cache the result a few minutes, skip
       straight to local while down; `LOYD_OFFLINE=1` override; OFFLINE in the banner.
 - [ ] **Codify the safe deploy** as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
@@ -59,10 +65,9 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 - [ ] Verify the `hihilabs` kit commands against the real container/repo and flip
       `"verified": true` (first app-dev kit, chosen 2026-11-18).
 - [ ] Decide if/when to flip `LOYD_BRAIN_POLICY` to `auto` (reverses "GPU box never primary").
-- [ ] GPU plan: measure whether cam fits one 5060 Ti (smaller minicpm-v quant); decide where
-      the two Quadro P2000s (5 GB, Pascal) go. Check current ollama/llama.cpp still supports
-      Pascal (CUDA 13 dropped it — may need a pinned build). Candidate role: always-on small
-      router model + embeddings, so routing never fights cam for VRAM.
+- [ ] GPU plan (decided 2026-11-18: Quadros are out; the two 5060 Tis time-share). Confirm
+      what the vision pipeline needs offline (does anything run without CompanyCam?) and
+      pick the 32B offline model that fits both cards with useful context.
 - [ ] LoRA experiment (after traces + a 30–50 task eval set exist): base Qwen + per-kit
       adapters trained only on `trainable` data; keep only if it beats the base on the eval.
 - [ ] Merge PR #1, then on panel: `git -C /opt/loyd checkout main && git -C /opt/loyd pull`.
