@@ -24,7 +24,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
       when vision is idle or at night, never by pausing vision; `online` reverses it. Dry-run by default; container names come from config, not hardcoded.
       Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
-- [ ] **Codify the safe deploy** as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
+- [ ] **Codify the safe deploy** *(IN PROGRESS in PR #1 — skip)* as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
       of the target ref → run `pytest` with the prod venv → start it on a spare port with the
       prod env file and smoke-test `/healthz`, OAuth metadata, 401 on the MCP path → switch
       `/opt/loyd` → schedule restart + health check with auto-rollback (what was done by hand
