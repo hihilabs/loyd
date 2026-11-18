@@ -28,8 +28,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
       when vision is idle or at night, never by pausing vision; `online` reverses it. Dry-run by default; container names come from config, not hardcoded.
       Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
-- [ ] **Offline detection.** *(IN PROGRESS in PR #1 — skip)* Probe the Claude API once, cache the result a few minutes, skip
-      straight to local while down; `LOYD_OFFLINE=1` override; OFFLINE in the banner.
 - [ ] **Codify the safe deploy** as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
       of the target ref → run `pytest` with the prod venv → start it on a spare port with the
       prod env file and smoke-test `/healthz`, OAuth metadata, 401 on the MCP path → switch
@@ -83,6 +81,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Offline detection: one cached probe of the Claude API (120 s), mid-request network errors remembered, `LOYD_OFFLINE=1/0`, OFFLINE banner — PR #1
 - [x] tmux tools: `run_in_tmux` (Loyd's own `tmux -L loyd` server, run_shell's rules), `job_output`, `tmux_read` — live-tested on Tokyo7 — PR #1
 - [x] `netdiag` kit (11 read-only commands incl. layered `triage`), all run live on Tokyo7 2026-11-18 — PR #1
 - [x] Kit framework: `kits.py`, `kits/ops.json` (verified, read-only), `kits/hihilabs.json` skeleton (unverified) — PR #1

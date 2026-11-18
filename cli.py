@@ -30,7 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
-from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL   # noqa: E402
+from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online_status   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
 import audit                                       # noqa: E402
 
@@ -226,7 +226,10 @@ def main():
 
     sess = Session(args.model, args.url, args.claude_model, args.max_iters)
 
-    key = ("claude ready" if os.getenv("ANTHROPIC_API_KEY")
+    online, why = online_status() if os.getenv("ANTHROPIC_API_KEY") else (True, "")
+    key = ("claude ready" if os.getenv("ANTHROPIC_API_KEY") and online
+           else f"{YEL}OFFLINE ({why}) — local brain {args.model} answers{RST}{DIM}"
+           if os.getenv("ANTHROPIC_API_KEY")
            else f"{RED}no ANTHROPIC_API_KEY — every turn falls back to {args.model}{RST}{DIM}")
     m = mode()
     mtag = f"{RED}OPERATOR{RST}{DIM}" if m == "operator" else "read-only"

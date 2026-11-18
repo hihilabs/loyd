@@ -13,9 +13,45 @@ ANTHROPIC_API_KEY in the environment.
 """
 import json
 import os
+import socket
 import time
+from urllib.parse import urlsplit
 import urllib.error
 import urllib.request
+
+
+# ── Offline detection ────────────────────────────────────────────────────────
+# One quick TCP connect to the API host, remembered for OFFLINE_CACHE_S, so an
+# outage costs ~3 s once instead of a long hang on every turn. LOYD_OFFLINE=1
+# forces offline (planned outage, metered link); LOYD_OFFLINE=0 skips the probe.
+OFFLINE_CACHE_S = 120
+PROBE_TIMEOUT_S = 3
+_probe = {"at": 0.0, "online": True, "why": ""}
+
+
+def online_status(force: bool = False):
+    """-> (online: bool, why: str). Cached; a failure is remembered too."""
+    env = os.getenv("LOYD_OFFLINE", "").strip()
+    if env == "1":
+        return False, "LOYD_OFFLINE=1"
+    if env == "0":
+        return True, "LOYD_OFFLINE=0"
+    now = time.time()
+    if not force and now - _probe["at"] < OFFLINE_CACHE_S:
+        return _probe["online"], _probe["why"]
+    host = urlsplit(ANTHROPIC_URL).hostname
+    try:
+        socket.create_connection((host, 443), timeout=PROBE_TIMEOUT_S).close()
+        online, why = True, ""
+    except OSError as e:
+        online, why = False, f"can't reach {host}: {e.__class__.__name__}"
+    _probe.update(at=now, online=online, why=why)
+    return online, why
+
+
+def mark_offline(why: str):
+    """Record a failure seen mid-request so the next turns skip straight to local."""
+    _probe.update(at=time.time(), online=False, why=why)
 
 
 class ClaudeUnavailable(Exception):
@@ -103,6 +139,9 @@ class ClaudeAgent:
         string return is indistinguishable from a real answer."""
         if not self.api_key:
             raise ClaudeUnavailable("ANTHROPIC_API_KEY is not set")
+        online, why = online_status()
+        if not online:
+            raise ClaudeUnavailable(f"offline ({why})")
         messages = [{"role": "user", "content": user_message}]
         for _step in range(self.max_iters):
             t0 = time.time()
@@ -111,6 +150,9 @@ class ClaudeAgent:
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors="replace")[:400]
                 raise ClaudeUnavailable(f"Claude API error {e.code}: {detail}")
+            except (urllib.error.URLError, OSError) as e:
+                mark_offline(f"{type(e).__name__}: {e}")
+                raise ClaudeUnavailable(f"{type(e).__name__}: {e}")
             except Exception as e:
                 raise ClaudeUnavailable(f"{type(e).__name__}: {e}")
             dt = time.time() - t0

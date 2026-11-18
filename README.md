@@ -24,4 +24,4 @@ loyd                             # interactive; /help, /audit, /local, /update
 
 Key env: `LOYD_KITS`, `LOYD_MODE` (`readonly` | `operator`), `LOYD_REMOTE` / `LOYD_REMOTE_PORT`,
 `LOYD_REMOTE_READONLY`, `LOYD_AUDIT_LOG`, `ANTHROPIC_API_KEY`, `LOYD_CLAUDE_MODEL`
-(default `claude-opus-5-5`), `LOYD_CLAUDE_EFFORT` (`high`), `OLLAMA_URL`, `OLLAMA_AI_MODEL`.
+(default `claude-opus-5-5`), `LOYD_CLAUDE_EFFORT` (`high`), `LOYD_OFFLINE` (`1` force local, `0` skip the probe), `OLLAMA_URL`, `OLLAMA_AI_MODEL`.
