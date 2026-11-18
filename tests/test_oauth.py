@@ -235,3 +235,8 @@ def test_readonly_token_gets_readonly_shell_on_operator_server(m, monkeypatch, t
     assert not f.exists()
     _call(m, OP, "run_shell", {"command": f"touch {f}"})
     assert f.exists()
+
+
+def test_healthz_is_public_and_quiet(m):
+    r = m.client.get("/healthz")
+    assert r.status_code == 200 and r.json() == {"ok": True}

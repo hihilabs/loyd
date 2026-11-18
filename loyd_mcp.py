@@ -353,6 +353,9 @@ def _client_ip(request: Request) -> str:
 
 def _throttled(ip: str) -> bool:
     now = time.time()
+    if len(_auth_failures) > 1000:                 # bound memory under a spray of IPs
+        for k in [k for k, v in _auth_failures.items() if not v or now - v[-1] > _FAIL_WINDOW]:
+            _auth_failures.pop(k, None)
     recent = [t for t in _auth_failures.get(ip, []) if now - t < _FAIL_WINDOW]
     _auth_failures[ip] = recent
     return len(recent) >= _FAIL_MAX
@@ -609,8 +612,15 @@ async def oauth_token(request: Request):
     return _token_error("unsupported_grant_type")
 
 
+async def healthz(_request: Request):
+    """Unauthenticated liveness probe for monitors / deploy checks. Public, so it
+    reveals nothing (not the target host, not the MCP path)."""
+    return JSONResponse({"ok": True})
+
+
 app = Starlette(
     routes=[
+        Route("/healthz", healthz),
         Route(f"/.well-known/oauth-protected-resource{PATH}", oauth_protected_resource),
         Route("/.well-known/oauth-protected-resource", oauth_protected_resource),
         Route("/.well-known/oauth-authorization-server", oauth_authorization_server),

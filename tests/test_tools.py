@@ -117,3 +117,13 @@ def test_audit_records_and_scrubs(monkeypatch, tmp_path):
     assert recs[0]["args"]["content"]["chars"] == 600 and "secret" not in log.read_text()
     assert recs[1]["outcome"] == "denied" and recs[2]["outcome"] == "ok"
     assert oct(log.stat().st_mode)[-3:] == "600"
+
+
+def test_audit_rotates(monkeypatch, tmp_path):
+    import audit
+    log = tmp_path / "a.jsonl"
+    monkeypatch.setenv("LOYD_AUDIT_LOG", str(log))
+    monkeypatch.setenv("LOYD_AUDIT_MAX_MB", "0.0005")      # ~500 bytes
+    for _ in range(20):
+        audit.record("t", "run_shell", {"command": "x" * 50}, "ok")
+    assert (tmp_path / "a.jsonl.1").exists() and log.stat().st_size < 1000

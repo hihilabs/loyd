@@ -30,7 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
-from claude_backend import ClaudeAgent, ClaudeUnavailable   # noqa: E402
+from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
 import audit                                       # noqa: E402
 
@@ -143,6 +143,12 @@ def self_update():
         print(f"{DIM}{home} isn't a git checkout — re-run install.sh to update.{RST}")
         return
     print(f"{DIM}updating {home} …{RST}")
+    head = subprocess.run(["git", "-C", home, "symbolic-ref", "-q", "HEAD"],
+                          capture_output=True, text=True)
+    if head.returncode != 0:
+        print(f"{YEL}{home} is on a pinned commit (detached HEAD), not a branch — "
+              f"run `git -C {home} checkout main` first, then /update.{RST}")
+        return
     p = subprocess.run(["git", "-C", home, "pull", "--ff-only"], capture_output=True, text=True)
     out = (p.stdout + p.stderr).strip()
     if out:
@@ -214,7 +220,7 @@ def main():
     ap.add_argument("question", nargs="*", help="one-shot question (omit for interactive)")
     ap.add_argument("--model", default=os.getenv("OLLAMA_AI_MODEL", "qwen2.5-coder:7b"))
     ap.add_argument("--url", default=os.getenv("OLLAMA_URL", "http://localhost:11434"))
-    ap.add_argument("--claude-model", default=os.getenv("LOYD_CLAUDE_MODEL", "claude-opus-4-8"))
+    ap.add_argument("--claude-model", default=os.getenv("LOYD_CLAUDE_MODEL", DEFAULT_MODEL))
     ap.add_argument("--max-iters", type=int, default=8)
     args = ap.parse_args()
 

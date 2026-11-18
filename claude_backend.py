@@ -12,6 +12,7 @@ Stdlib-only on purpose (urllib, no `anthropic` SDK) — Loyd installs via
 ANTHROPIC_API_KEY in the environment.
 """
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -26,6 +27,13 @@ from loyd_core import DEFAULT_SYSTEM
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+DEFAULT_MODEL = "claude-opus-5-5"
+# Opus 5.5 always thinks; effort is the depth control and defaults to "medium" on
+# this model — ops debugging is intelligence-sensitive, so default to "high".
+EFFORT = os.getenv("LOYD_CLAUDE_EFFORT", "high")
+# On a safety-classifier decline, the API re-runs the turn on a fallback model
+# inside the same call instead of just stopping. Set LOYD_CLAUDE_FALLBACKS=off to disable.
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 def _to_anthropic_tools(schemas):
@@ -46,10 +54,10 @@ class ClaudeAgent:
     """Mirrors LoydAgent's interface (.run + on_event/confirm/write_tools) but
     talks to the Anthropic Messages API and drives its native tool_use loop."""
 
-    def __init__(self, model="claude-opus-4-8", api_key=None,
+    def __init__(self, model=DEFAULT_MODEL, api_key=None,
                  tool_schemas=None, execute=None,
-                 system=DEFAULT_SYSTEM, max_iters=8, max_tokens=4096,
-                 on_event=None, timeout=120, confirm=None, write_tools=None,
+                 system=DEFAULT_SYSTEM, max_iters=8, max_tokens=16000,
+                 on_event=None, timeout=300, confirm=None, write_tools=None,
                  should_confirm=None):
         self.model = model
         self.api_key = api_key
@@ -65,15 +73,25 @@ class ClaudeAgent:
         self.should_confirm = should_confirm or (lambda name, args: name in self.write_tools)
 
     def _messages(self, messages):
-        body = json.dumps({
+        payload = {
             "model": self.model, "max_tokens": self.max_tokens,
             "system": self.system, "tools": self.tools, "messages": messages,
-        }).encode()
-        req = urllib.request.Request(ANTHROPIC_URL, data=body, headers={
+            # Auto prompt caching: caches up to the last block each request, so in
+            # this tool loop every turn re-reads the system prompt + tools + prior
+            # turns from cache (~0.1x) instead of paying full price for them again.
+            "cache_control": {"type": "ephemeral"},
+            "output_config": {"effort": EFFORT},
+        }
+        headers = {
             "content-type": "application/json",
             "x-api-key": self.api_key,
             "anthropic-version": ANTHROPIC_VERSION,
-        })
+        }
+        if os.getenv("LOYD_CLAUDE_FALLBACKS", "default").lower() != "off":
+            payload["fallbacks"] = "default"
+            headers["anthropic-beta"] = FALLBACK_BETA
+        req = urllib.request.Request(ANTHROPIC_URL, data=json.dumps(payload).encode(),
+                                     headers=headers)
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return json.loads(r.read())
 
@@ -83,7 +101,6 @@ class ClaudeAgent:
         reply. That is out-of-band on purpose: the caller falls back to the
         local brain only while nothing has been emitted yet, and a bracketed
         string return is indistinguishable from a real answer."""
-        """Run the tool-use loop for one user turn. Returns the final text answer."""
         if not self.api_key:
             raise ClaudeUnavailable("ANTHROPIC_API_KEY is not set")
         messages = [{"role": "user", "content": user_message}]
@@ -99,13 +116,21 @@ class ClaudeAgent:
             dt = time.time() - t0
 
             content = resp.get("content", []) or []
+            if resp.get("stop_reason") == "refusal":
+                det = resp.get("stop_details") or {}
+                text = (f"[Claude declined this request"
+                        f"{' (' + det['category'] + ')' if det.get('category') else ''}"
+                        f" — try /local or rephrase]")
+                self.on_event("final", {"text": text, "dt": dt})
+                return text
             if resp.get("stop_reason") != "tool_use":
                 text = "".join(b.get("text", "") for b in content
                                if b.get("type") == "text").strip()
                 self.on_event("final", {"text": text, "dt": dt})
                 return text
 
-            # Record Claude's turn verbatim (text + tool_use blocks), then answer each tool.
+            # Record Claude's turn verbatim (thinking + text + tool_use blocks — thinking
+            # must be passed back unchanged), then answer each tool.
             messages.append({"role": "assistant", "content": content})
             results = []
             for b in content:

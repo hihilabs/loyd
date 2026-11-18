@@ -3,7 +3,8 @@ Loyd audit log — one JSON line per tool call: who, via what, which tool, what
 args, outcome, how long. Append-only, stdlib-only, thread-safe (the MCP server
 runs tools on worker threads).
 
-  LOYD_AUDIT_LOG   path (default ~/.loyd/audit.jsonl); "off" disables.
+  LOYD_AUDIT_LOG       path (default ~/.loyd/audit.jsonl); "off" disables.
+  LOYD_AUDIT_MAX_MB    rotate to <path>.1 past this size (default 20; one old file kept).
 
 Arguments are logged as given except write_file's content, which is replaced by
 its length + sha256 (file bodies can be huge or secret). Long strings are
@@ -57,11 +58,21 @@ def record(actor, tool, args, outcome, result_chars=0, dt=0.0, readonly=None):
     try:
         with _lock:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            _rotate(path)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a") as f:
                 f.write(line + "\n")
     except OSError:
         pass   # auditing must never break a tool call
+
+
+def _rotate(path):
+    try:
+        limit = float(os.getenv("LOYD_AUDIT_MAX_MB", "20")) * 1024 * 1024
+        if os.path.getsize(path) > limit:
+            os.replace(path, path + ".1")
+    except (OSError, ValueError):
+        pass
 
 
 def tail(n=20):
