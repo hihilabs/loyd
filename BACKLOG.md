@@ -37,7 +37,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
       (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
       `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
-- [ ] **tmux tools.** `run_in_tmux(name, command)` starts a long job (build, backup,
+- [ ] **tmux tools.** *(IN PROGRESS in PR #1 — skip)* `run_in_tmux(name, command)` starts a long job (build, backup,
       `docker pull`) in a named detached tmux window and returns at once, beating
       `run_shell`'s 30 s timeout; `tmux_read(target, lines)` captures a pane's recent output
       (read-only) so "what's failing in my build pane?" works. Writes go through the
