@@ -163,11 +163,16 @@ Tune with `LOYD_MAX_OUTPUT_LINES` / `LOYD_MAX_OUTPUT_CHARS`.
 
 ## Kits
 
-`LOYD_KITS=ops,hihilabs` adds each kit's verified commands as tools named
+`LOYD_KITS=ops,netdiag,hihilabs` adds each kit's verified commands as tools named
 `<kit>_<command>` (see `kits.py` for the file format). Read commands are offered to
 every token; write commands follow the same rules as the core write tools (operator
 only, approved per call, audited). Commands marked `"verified": false` are not
 offered until someone checks them against the real system.
+
+Shipped kits: `ops` (disk, memory, GPUs, containers, logs), `netdiag` (ping, trace,
+DNS lookup/compare, port, HTTP, TLS cert, interfaces, neighbours, listening sockets,
+and `netdiag_triage`: gateway → DNS → internet → one service, stopping at the first
+layer that fails), `hihilabs` (skeleton, unverified).
 
 ## Users & tokens
 

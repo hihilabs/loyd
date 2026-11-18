@@ -42,14 +42,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       `run_shell`'s 30 s timeout; `tmux_read(target, lines)` captures a pane's recent output
       (read-only) so "what's failing in my build pane?" works. Writes go through the
       operator/confirm/audit path like any write tool; window names validated.
-- [ ] **`netdiag` kit (read-only troubleshooting)** *(IN PROGRESS in PR #1 — skip)*, acting wherever Loyd runs: `net_ping`
-      (count ≤ 10), `net_trace`, `net_dns` (name, type, optional server — compare the router's
-      answer with 1.1.1.1 to spot split-DNS issues), `net_port` (TCP connect test),
-      `net_http` (status, timing, cert expiry), `net_iface` (addresses, routes, gateway, DNS
-      servers), `net_neighbors` (ARP/neighbour table), `whats_listening` (local listening
-      sockets). Plus a **"something's out" playbook**: gateway → DNS → internet → each HiHi
-      service, stopping at the first failure and saying which layer broke. Inputs validated
-      (hostnames/IPs only), counts and timeouts capped.
 - [ ] **`audit` kit — authorized network audits only, scope-gated.** Loads only when a scope
       file `audits/<client>.json` exists: client, who authorized it, authorization reference,
       allowed CIDRs + domains, start/expiry, intensity (`gentle` default). EVERY audit tool
@@ -95,6 +87,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] `netdiag` kit (11 read-only commands incl. layered `triage`), all run live on Tokyo7 2026-11-18 — PR #1
 - [x] Kit framework: `kits.py`, `kits/ops.json` (verified, read-only), `kits/hihilabs.json` skeleton (unverified) — PR #1
 - [x] OAuth completed (signed short-lived tokens, refresh, redirect validation) — PR #1
 - [x] Read-only callers get a read-only shell; `LOYD_REMOTE_READONLY` — PR #1

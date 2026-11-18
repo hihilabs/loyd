@@ -114,3 +114,40 @@ def test_ops_kit_renders_through_real_runner(monkeypatch):
     assert calls[-1] == ("docker logs --tail 20 camagent-worker-gpu1 2>&1", {"timeout": 60})
     impl["ops_containers"]({}, False)
     assert "{{.Names}}" in calls[-1][0]
+
+
+def _netdiag():
+    return kits.load_kit(os.path.join(ROOT, "kits", "netdiag.json"))
+
+
+def _cmd(kit, name):
+    return next(c for c in kit["commands"] if c["name"] == name)
+
+
+def test_netdiag_all_read_only_and_verified():
+    k = _netdiag()
+    assert all(c["mode"] == "read" and c["verified"] for c in k["commands"])
+
+
+@pytest.mark.parametrize("bad", ["-oProxyCommand=x", "a;b", "a b", "$(id)", "`id`", ""])
+def test_netdiag_host_rejects_option_and_shell_injection(bad):
+    with pytest.raises(kits.KitError):
+        kits.render("netdiag", _cmd(_netdiag(), "ping"), {"host": bad})
+
+
+def test_netdiag_url_rejects_query_and_odd_schemes():
+    c = _cmd(_netdiag(), "http")
+    for bad in ["https://x.com/?a=1", "file:///etc/passwd", "https://x.com/$(id)", "gopher://x"]:
+        with pytest.raises(kits.KitError):
+            kits.render("netdiag", c, {"url": bad})
+    assert kits.render("netdiag", c, {"url": "https://hihilabs.xyz/"}).endswith("https://hihilabs.xyz/")
+
+
+def test_netdiag_triage_renders_and_parses_with_and_without_service():
+    import subprocess
+    c = _cmd(_netdiag(), "triage")
+    for args in ({}, {"service": "hihilabs.xyz"}):
+        line = kits.render("netdiag", c, args)
+        assert "%{http_code}" in line and "${gw:-none}" in line
+        assert subprocess.run(["bash", "-n", "-c", line]).returncode == 0
+    assert "svc=hihilabs.xyz" in kits.render("netdiag", c, {"service": "hihilabs.xyz"})

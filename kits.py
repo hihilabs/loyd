@@ -23,7 +23,7 @@ Rules (enforced at load — a bad kit fails loudly, it never half-loads):
   * every string param needs a `pattern` (anchored regex); integers take min/max;
     enums take `values`. Values are validated, then shell-quoted into `run`.
   * `{param}` placeholders must all be declared; other braces (docker's
-    `{{.Names}}`) are left alone.
+    `{{.Names}}`, curl's `%{http_code}`, shell `${var:-x}`) are left alone.
   * mode "write" commands join WRITE_TOOLS: operator-only, confirm-gated, audited.
   * "verified": false commands are NOT offered as tools until a human checks them
     against the real system and flips the flag; calling one is refused.
@@ -35,7 +35,7 @@ import re
 import shlex
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_PLACEHOLDER = re.compile(r"\{([a-z_][a-z0-9_]*)\}")
+_PLACEHOLDER = re.compile(r"(?<!%)\{([a-z_][a-z0-9_]*)\}")   # %{...} = curl -w, left alone
 MAX_TIMEOUT = 600
 
 
