@@ -35,7 +35,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
       (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
       `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
-- [ ] **`audit` kit — authorized network audits only, scope-gated.** Loads only when a scope
+- [ ] **`audit` kit — authorized network audits only, scope-gated.** *(IN PROGRESS in PR #1 — skip)* Loads only when a scope
       file `audits/<client>.json` exists: client, who authorized it, authorization reference,
       allowed CIDRs + domains, start/expiry, intensity (`gentle` default). EVERY audit tool
       refuses a target outside scope or after expiry, and every call is audited with the
