@@ -42,7 +42,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       `run_shell`'s 30 s timeout; `tmux_read(target, lines)` captures a pane's recent output
       (read-only) so "what's failing in my build pane?" works. Writes go through the
       operator/confirm/audit path like any write tool; window names validated.
-- [ ] **`netdiag` kit (read-only troubleshooting)**, acting wherever Loyd runs: `net_ping`
+- [ ] **`netdiag` kit (read-only troubleshooting)** *(IN PROGRESS in PR #1 — skip)*, acting wherever Loyd runs: `net_ping`
       (count ≤ 10), `net_trace`, `net_dns` (name, type, optional server — compare the router's
       answer with 1.1.1.1 to spot split-DNS issues), `net_port` (TCP connect test),
       `net_http` (status, timing, cert expiry), `net_iface` (addresses, routes, gateway, DNS
