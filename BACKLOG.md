@@ -8,6 +8,30 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
+- [ ] **Kit framework (declarative tool kits).** A kit is a file `kits/<name>.json`: named
+      commands with typed, validated params (e.g. `run_tests(app)` →
+      `docker exec hihilabs python manage.py test {app}`), each marked `read` or `write`,
+      plus a short description and runbook notes. Kits become tools; `LOYD_KITS=ops,hihilabs`
+      picks which load. Write commands go through the same confirm/read-only/audit path as
+      write tools; params are shell-quoted, never interpolated raw. Ship an `ops` kit (move
+      today's container/disk helpers there) and a **`hihilabs` kit skeleton** whose commands
+      are marked `"verified": false` until a human checks them (see Needs a human).
+- [ ] **Trace recorder.** Opt-in (`LOYD_TRACE_DIR`) full-session traces: task, each tool call
+      + result, final answer, and a `brain` tag (`claude` | `local` | `human`). The trace
+      format has a `trainable` flag that is ALWAYS false when `brain == "claude"` (Anthropic
+      terms: no Claude output as model-training data). Include a `tools/export_training.py`
+      that only exports `trainable: true` records and test that Claude records can't leak.
+- [ ] **Knowledge base + `search_kb` tool (retrieval, not training).** `kb/` of markdown
+      notes: FINDINGS, runbooks, kit notes, and short "session notes" written at the end of
+      Claude research sessions. Stdlib-only ranked keyword search (no embeddings dependency
+      yet). Used as *context* for the local model; never fed to training.
+- [ ] **Brain router.** `LOYD_BRAIN_POLICY=claude-first | local-first | auto`. `auto` asks the
+      local model one yes/no question ("routine maintenance a kit covers, or research /
+      open-ended?") and routes routine work local, research to Claude, with escalation to
+      Claude if the local run fails or hits the step limit. Default stays `claude-first`
+      (policy 2026-09-04) until a human flips it.
+- [ ] **Offline detection.** Probe the Claude API once, cache the result a few minutes, skip
+      straight to local while down; `LOYD_OFFLINE=1` override; OFFLINE in the banner.
 - [ ] **Codify the safe deploy** as `deploy/deploy.sh` + `deploy/loyd-mcp.service`: git worktree
       of the target ref → run `pytest` with the prod venv → start it on a spare port with the
       prod env file and smoke-test `/healthz`, OAuth metadata, 401 on the MCP path → switch
@@ -32,6 +56,15 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Needs a human
 
+- [ ] Verify the `hihilabs` kit commands against the real container/repo and flip
+      `"verified": true` (first app-dev kit, chosen 2026-11-18).
+- [ ] Decide if/when to flip `LOYD_BRAIN_POLICY` to `auto` (reverses "GPU box never primary").
+- [ ] GPU plan: measure whether cam fits one 5060 Ti (smaller minicpm-v quant); decide where
+      the two Quadro P2000s (5 GB, Pascal) go. Check current ollama/llama.cpp still supports
+      Pascal (CUDA 13 dropped it — may need a pinned build). Candidate role: always-on small
+      router model + embeddings, so routing never fights cam for VRAM.
+- [ ] LoRA experiment (after traces + a 30–50 task eval set exist): base Qwen + per-kit
+      adapters trained only on `trainable` data; keep only if it beats the base on the eval.
 - [ ] Merge PR #1, then on panel: `git -C /opt/loyd checkout main && git -C /opt/loyd pull`.
 - [ ] Rotate the `admin1` token (it was shown in a chat on 2026-11-18). Reconnect clients after.
 - [ ] Create the `loyd-ro` login on Tokyo7 and set `LOYD_REMOTE_READONLY` (MCP.md).
