@@ -1,0 +1,27 @@
+{
+  "name": "ops",
+  "description": "Everyday host checks: disk, memory, GPUs, containers and their logs. Read-only.",
+  "commands": [
+    {"name": "disk_usage", "mode": "read", "verified": true,
+     "description": "Free and used space for a filesystem path (df -h).",
+     "params": {"path": {"type": "string", "pattern": "^/[A-Za-z0-9._/-]*$", "default": "/",
+                         "description": "absolute path, e.g. /mnt/user"}},
+     "run": "df -h {path}"},
+    {"name": "memory", "mode": "read", "verified": true,
+     "description": "RAM and swap in MiB, plus load average and uptime.",
+     "run": "free -m && uptime"},
+    {"name": "gpu_status", "mode": "read", "verified": true,
+     "description": "Per-GPU memory, utilisation, temperature and power, and which processes hold GPU memory.",
+     "run": "nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw --format=csv && nvidia-smi --query-compute-apps=pid,used_memory,process_name --format=csv"},
+    {"name": "containers", "mode": "read", "verified": true,
+     "description": "All containers with image and status (running and stopped).",
+     "run": "docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}'"},
+    {"name": "container_logs", "mode": "read", "verified": true, "timeout": 60,
+     "description": "The last N log lines of one container, stdout and stderr together.",
+     "params": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+                         "description": "exact container name"},
+                "lines": {"type": "integer", "min": 1, "max": 2000, "default": 100,
+                          "description": "how many lines from the end"}},
+     "run": "docker logs --tail {lines} {name} 2>&1"}
+  ]
+}

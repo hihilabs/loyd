@@ -47,7 +47,7 @@ _REMOTE_RO   = os.getenv("LOYD_REMOTE_READONLY", "").strip()
 _MODE = os.getenv("LOYD_MODE", "readonly").strip().lower()
 
 
-def _exec(command: str, input: str = None, ro: bool = False):
+def _exec(command: str, input: str = None, ro: bool = False, timeout: int = None):
     """Run a bash command locally, or on LOYD_REMOTE via SSH when set.
     Uses a NON-login shell (bash -c): login shells (-l) source /etc/profile +
     ~/.bash_profile, which on managed hosts print banners (e.g. Plesk) that
@@ -59,8 +59,8 @@ def _exec(command: str, input: str = None, ro: bool = False):
                 "-p", _REMOTE_PORT, target, f"bash -c {shlex.quote(command)}"]
     else:
         full = ["bash", "-c", command]
-    return subprocess.run(full, capture_output=True, text=True, timeout=SHELL_TIMEOUT_S,
-                          input=input)
+    return subprocess.run(full, capture_output=True, text=True,
+                          timeout=timeout or SHELL_TIMEOUT_S, input=input)
 
 
 def where() -> str:
@@ -367,6 +367,29 @@ _IMPL = {
     "restart_container": lambda a, ro: restart_container(a.get("name", "")),
     "prune_images": lambda a, ro: prune_images(a.get("scope", "dangling")),
 }
+
+
+def _run_kit_command(line: str, timeout: int) -> str:
+    """Run a vetted kit command line (already validated + quoted by kits.render)
+    on the host Loyd acts on. Kit commands are fixed, reviewed templates, so they
+    run with the main login like get_container_status — not through run_shell's
+    denylist, and not through the unprivileged read-only login."""
+    try:
+        p = _exec(line, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"ERROR: kit command timed out after {timeout}s."
+    except Exception as e:
+        return f"ERROR running kit command: {type(e).__name__}: {e}"
+    out = p.stdout or ""
+    if p.stderr:
+        out += ("\n[stderr]\n" + p.stderr)
+    if p.returncode != 0:
+        out += f"\n[exit code {p.returncode}]"
+    return _cap(out.rstrip() or f"(no output; exit code {p.returncode})")
+
+
+import kits as _kits                                  # noqa: E402
+KITS = _kits.install(TOOL_SCHEMAS, _IMPL, WRITE_TOOLS, _run_kit_command)
 
 
 def execute_tool(name: str, args: dict, actor: str = "local", readonly: bool = False) -> str:

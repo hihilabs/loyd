@@ -8,14 +8,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **Kit framework (declarative tool kits).** *(IN PROGRESS in PR #1 — skip)* A kit is a file `kits/<name>.json`: named
-      commands with typed, validated params (e.g. `run_tests(app)` →
-      `docker exec hihilabs python manage.py test {app}`), each marked `read` or `write`,
-      plus a short description and runbook notes. Kits become tools; `LOYD_KITS=ops,hihilabs`
-      picks which load. Write commands go through the same confirm/read-only/audit path as
-      write tools; params are shell-quoted, never interpolated raw. Ship an `ops` kit (move
-      today's container/disk helpers there) and a **`hihilabs` kit skeleton** whose commands
-      are marked `"verified": false` until a human checks them (see Needs a human).
 - [ ] **Trace recorder.** Opt-in (`LOYD_TRACE_DIR`) full-session traces: task, each tool call
       + result, final answer, and a `brain` tag (`claude` | `local` | `human`). The trace
       format has a `trainable` flag that is ALWAYS false when `brain == "claude"` (Anthropic
@@ -87,7 +79,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Needs a human
 
-- [ ] Verify the `hihilabs` kit commands against the real container/repo and flip
+- [ ] Verify the `hihilabs` kit commands (`kits/hihilabs.json`: container name, test runner, migrate) and set `LOYD_KITS=ops,hihilabs` on the MCP server against the real container/repo and flip
       `"verified": true` (first app-dev kit, chosen 2026-11-18).
 - [ ] Decide if/when to flip `LOYD_BRAIN_POLICY` to `auto` (reverses "GPU box never primary").
 - [ ] GPU plan (decided 2026-11-18: Quadros are out; the two 5060 Tis time-share). Confirm
@@ -103,6 +95,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Kit framework: `kits.py`, `kits/ops.json` (verified, read-only), `kits/hihilabs.json` skeleton (unverified) — PR #1
 - [x] OAuth completed (signed short-lived tokens, refresh, redirect validation) — PR #1
 - [x] Read-only callers get a read-only shell; `LOYD_REMOTE_READONLY` — PR #1
 - [x] Audit log (+ rotation), remote `write_file`, head+tail trimming, CI — PR #1

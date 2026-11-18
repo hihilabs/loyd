@@ -161,6 +161,14 @@ log survives), with an "N lines omitted" marker. The CLI caps at 50 lines / 2.5k
 for the local 7B; the MCP server defaults to 400 lines / 20k chars for full Claude.
 Tune with `LOYD_MAX_OUTPUT_LINES` / `LOYD_MAX_OUTPUT_CHARS`.
 
+## Kits
+
+`LOYD_KITS=ops,hihilabs` adds each kit's verified commands as tools named
+`<kit>_<command>` (see `kits.py` for the file format). Read commands are offered to
+every token; write commands follow the same rules as the core write tools (operator
+only, approved per call, audited). Commands marked `"verified": false` are not
+offered until someone checks them against the real system.
+
 ## Users & tokens
 
 - One entry per person in `LOYD_MCP_TOKENS`; give each their own token.
