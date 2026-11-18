@@ -8,7 +8,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **Trace recorder.** Opt-in (`LOYD_TRACE_DIR`) full-session traces: task, each tool call
+- [ ] **Trace recorder.** *(IN PROGRESS in PR #1 — skip)* Opt-in (`LOYD_TRACE_DIR`) full-session traces: task, each tool call
       + result, final answer, and a `brain` tag (`claude` | `local` | `human`). The trace
       format has a `trainable` flag that is ALWAYS false when `brain == "claude"` (Anthropic
       terms: no Claude output as model-training data). Include a `tools/export_training.py`
