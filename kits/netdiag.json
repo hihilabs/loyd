@@ -1,0 +1,191 @@
+{
+  "name": "netdiag",
+  "description": "Read-only network troubleshooting from wherever Loyd runs: ping, trace, DNS, ports, HTTP/TLS, interfaces, neighbours, listening sockets, and a layered outage check.",
+  "commands": [
+    {
+      "name": "triage",
+      "mode": "read",
+      "verified": true,
+      "timeout": 60,
+      "description": "Something's out? Checks this device, the gateway, DNS, the internet, then optionally one service, and stops at the first layer that fails, saying which.",
+      "params": {
+        "service": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$",
+          "required": false,
+          "description": "optional hostname to check last, e.g. hihilabs.xyz"
+        }
+      },
+      "run": "gw=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')\necho \"1 this device: $(hostname), gateway ${gw:-none}\"\n[ -n \"$gw\" ] || { echo \"STOP at 1: no default route. Check Wi-Fi or cable.\"; exit 1; }\nif ping -c 2 -W 2 \"$gw\" >/dev/null 2>&1; then echo \"2 gateway $gw: answering\"; else echo \"STOP at 2: gateway $gw not answering. Router or local link is down.\"; exit 1; fi\nif getent hosts one.one.one.one >/dev/null 2>&1; then echo \"3 DNS via $(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf): resolving\"; else\n  if dig @1.1.1.1 +short +time=2 +tries=1 one.one.one.one 2>/dev/null | grep -q .; then echo \"STOP at 3: local DNS server is failing, but the internet works (1.1.1.1 answers).\"; else echo \"STOP at 3: DNS failing, and 1.1.1.1 does not answer either. Internet is probably down.\"; fi; exit 1; fi\nif ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1 || curl -sS -m 6 -o /dev/null https://1.1.1.1 2>/dev/null; then echo \"4 internet: reachable\"; else echo \"STOP at 4: no route to the internet (gateway and DNS fine). ISP or upstream outage.\"; exit 1; fi\nsvc={service}\nif [ -n \"$svc\" ]; then\n  ip=$(getent hosts \"$svc\" | awk '{print $1; exit}')\n  case \"$ip\" in 10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|100.*) where=LAN/tailnet;; \"\") where=unresolved;; *) where=public;; esac\n  code=$(curl -sS -m 8 -o /dev/null -w '%{http_code}' \"https://$svc\" 2>/dev/null)\n  echo \"5 $svc: resolves to ${ip:-nothing} ($where), HTTPS status ${code:-no answer}\"\nfi\necho \"OK: every layer checked is up.\""
+    },
+    {
+      "name": "ping",
+      "mode": "read",
+      "verified": true,
+      "timeout": 30,
+      "description": "Ping a host a few times (packet loss and round-trip time).",
+      "params": {
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        },
+        "count": {
+          "type": "integer",
+          "min": 1,
+          "max": 10,
+          "default": 4,
+          "description": "pings to send"
+        }
+      },
+      "run": "ping -c {count} -W 2 {host}"
+    },
+    {
+      "name": "trace",
+      "mode": "read",
+      "verified": true,
+      "timeout": 90,
+      "description": "Trace the route to a host, one probe per hop, numeric addresses.",
+      "params": {
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        },
+        "hops": {
+          "type": "integer",
+          "min": 1,
+          "max": 30,
+          "default": 20,
+          "description": "max hops"
+        }
+      },
+      "run": "traceroute -n -w 2 -q 1 -m {hops} {host}"
+    },
+    {
+      "name": "dns_lookup",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "Look up a DNS record through this device's resolver.",
+      "params": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        },
+        "type": {
+          "type": "enum",
+          "values": [
+            "A",
+            "AAAA",
+            "CNAME",
+            "MX",
+            "TXT",
+            "NS"
+          ],
+          "default": "A",
+          "description": "record type"
+        }
+      },
+      "run": "dig +short +time=2 +tries=1 {name} {type}"
+    },
+    {
+      "name": "dns_compare",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "Resolve a name through the local resolver and through 1.1.1.1 side by side; a difference means split DNS (or a local DNS problem).",
+      "params": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        }
+      },
+      "run": "echo \"local resolver: $(dig +short +time=2 +tries=1 {name} | tr '\\n' ' ')\"; echo \"1.1.1.1:        $(dig @1.1.1.1 +short +time=2 +tries=1 {name} | tr '\\n' ' ')\""
+    },
+    {
+      "name": "port",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "Test whether a TCP port accepts connections, with connect time.",
+      "params": {
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        },
+        "port": {
+          "type": "integer",
+          "min": 1,
+          "max": 65535,
+          "description": "TCP port"
+        }
+      },
+      "run": "python3 -c 'import socket,sys,time\nt=time.time()\ntry:\n  socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=5).close(); print(\"open\",sys.argv[1],sys.argv[2],int((time.time()-t)*1000),\"ms\")\nexcept OSError as e:\n  print(\"closed or unreachable:\",sys.argv[1],sys.argv[2],e); sys.exit(1)' {host} {port}"
+    },
+    {
+      "name": "http",
+      "mode": "read",
+      "verified": true,
+      "timeout": 20,
+      "description": "Fetch a URL's status, total time and the IP it connected to (no body).",
+      "params": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/%-]*)?$",
+          "description": "http(s) URL, no query string"
+        }
+      },
+      "run": "curl -sS -o /dev/null -m 15 -w 'status %{http_code}  time %{time_total}s  ip %{remote_ip}\\n' {url}"
+    },
+    {
+      "name": "tls_cert",
+      "mode": "read",
+      "verified": true,
+      "timeout": 20,
+      "description": "Who a TLS certificate is for, who issued it, and when it expires.",
+      "params": {
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$",
+          "description": "hostname or IP address"
+        },
+        "port": {
+          "type": "integer",
+          "min": 1,
+          "max": 65535,
+          "default": 443,
+          "description": "TLS port"
+        }
+      },
+      "run": "echo | openssl s_client -connect {host}:{port} -servername {host} 2>/dev/null | openssl x509 -noout -subject -issuer -enddate"
+    },
+    {
+      "name": "interfaces",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "This device's addresses, routes and DNS servers.",
+      "run": "ip -brief addr; echo; ip route; echo; grep -v '^#' /etc/resolv.conf"
+    },
+    {
+      "name": "neighbors",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "Devices this machine has recently talked to on the local network (IP and MAC).",
+      "run": "ip neigh"
+    },
+    {
+      "name": "listening",
+      "mode": "read",
+      "verified": true,
+      "timeout": 15,
+      "description": "Ports this machine is listening on, and which program holds each.",
+      "run": "ss -ltnup"
+    }
+  ]
+}

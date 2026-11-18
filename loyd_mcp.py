@@ -24,20 +24,24 @@ Internet-exposed without auth is catastrophic, so:
   * Terminate TLS in front of it (cloudflared / tailscale-serve / reverse proxy).
     Never run plain HTTP on a public interface — the bearer token is the keys.
 
-OAUTH — added so mobile/desktop "Connectors" GUIs (which only know no-auth or
-real OAuth, never a bare static token) can connect too, not just CLI/.mcp.json
-clients that can set a raw Authorization header. This is deliberately NOT a
-real user-account system: /authorize renders a one-field form asking for one
-of the same LOYD_MCP_TOKENS values, and the "access_token" the flow hands
-back to the client IS that static token, unchanged — BearerAuth downstream
-needs zero new logic. OAuth here is just spec-shaped plumbing (RFC 8414
-metadata, RFC 7591 dynamic client registration, RFC 9728 protected-resource
-metadata, PKCE/S256 per the MCP auth spec) wrapped around a login form, not a
-second credential system to keep in sync with the first.
+OAUTH — so mobile/desktop/web "Connectors" GUIs (which only know no-auth or
+real OAuth, never a bare static token) can connect, not just CLI/.mcp.json
+clients that set a raw Authorization header. Still NOT a user-account system:
+/authorize asks for one of the same LOYD_MCP_TOKENS values. What it hands the
+client is a short-lived access token + rolling refresh token HMAC-signed with a
+key derived from that static token — so the master token never leaves the box,
+a connection can be scoped read-only at consent, and rotating the static token
+revokes every grant minted from it. Fully stateless (signed client_ids, signed
+tokens): restarts don't log connectors out. Spec coverage: RFC 8414 metadata,
+RFC 7591 dynamic registration, RFC 9728 protected-resource metadata, RFC 6749
+code + refresh grants, PKCE/S256 (RFC 7636), iss in the redirect (RFC 9207).
 
 Run:   pip install mcp uvicorn
        LOYD_MCP_TOKENS="me:o:$(openssl rand -hex 16)" python3 loyd_mcp.py
 Env:   LOYD_MCP_HOST (default 127.0.0.1)  LOYD_MCP_PORT (default 8848)
+       LOYD_MCP_PUBLIC_URL (pin OAuth issuer, e.g. https://loyd.hihilabs.xyz)
+       LOYD_MCP_ACCESS_TTL (3600) LOYD_MCP_REFRESH_TTL (2592000)
+       LOYD_MCP_OAUTH_SECRET (optional; signs client_ids, else derived from tokens)
        LOYD_MCP_PATH (default /mcp)        LOYD_REMOTE / LOYD_REMOTE_PORT to act on
                                            another host (no ollama here — the brain
                                            is whatever Claude client connects)
@@ -46,14 +50,20 @@ import base64
 import contextlib
 import contextvars
 import hashlib
+import hmac
 import html
+import json
 import os
 import secrets
 import sys
 import time
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Full Claude on the other end can digest far more than the local 7B the CLI caps
+# for — raise the trim limits unless the operator pinned them.
+os.environ.setdefault("LOYD_MAX_OUTPUT_CHARS", "20000")
+os.environ.setdefault("LOYD_MAX_OUTPUT_LINES", "400")
 from tools import TOOL_SCHEMAS, WRITE_TOOLS, execute_tool, where  # noqa: E402
 
 import anyio                                                       # noqa: E402
@@ -116,11 +126,13 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name, arguments):
     cur = _current.get() or {"user": "?", "operator": False}
-    if name in WRITE_TOOLS and not cur["operator"]:
-        return [mt.TextContent(type="text",
-                text=f"DENIED: '{name}' is an operator-only write tool; {cur['user']} is read-only.")]
+    # readonly=True makes execute_tool deny write tools AND run run_shell/read_file
+    # under read-only rules even when the server itself runs LOYD_MODE=operator —
+    # without it a read-only token got the operator shell. Every call is audited.
+    actor, ro = f"mcp:{cur['user']}", not cur["operator"]
     # execute_tool is blocking (subprocess/SSH) — run off the event loop
-    result = await anyio.to_thread.run_sync(lambda: execute_tool(name, arguments or {}))
+    result = await anyio.to_thread.run_sync(
+        lambda: execute_tool(name, arguments or {}, actor=actor, readonly=ro))
     return [mt.TextContent(type="text", text=result)]
 
 
@@ -132,6 +144,10 @@ async def _mcp_asgi(scope, receive, send):
 
 
 PATH = os.getenv("LOYD_MCP_PATH", "/mcp")
+# Pin the public origin (e.g. https://loyd.hihilabs.xyz) instead of reflecting the
+# Host header — recommended now that there's one public door; OAuth issuer/endpoint
+# URLs must match it exactly.
+PUBLIC_URL = os.getenv("LOYD_MCP_PUBLIC_URL", "").rstrip("/")
 
 
 def _base_url(request_or_scope):
@@ -141,6 +157,8 @@ def _base_url(request_or_scope):
     and OAuth's issuer/endpoint URLs need to match whichever one the client
     actually used. Always https: this process only ever receives plain HTTP
     from the local tailscale serve/funnel proxy that already terminated TLS."""
+    if PUBLIC_URL:
+        return PUBLIC_URL
     headers = getattr(request_or_scope, "headers", None)
     if headers is None:
         headers = {k.decode().lower(): v.decode() for k, v in request_or_scope.get("headers", [])}
@@ -170,7 +188,7 @@ class BearerAuth:
             # logs, so use it only where headers aren't settable.
             qs = parse_qs(scope.get("query_string", b"").decode())
             token = (qs.get("key") or [""])[0].strip() or token
-        ident = TOKENS.get(token)
+        ident = identity_for(token)
         if ident is None:
             resource_meta = f"{_base_url(scope)}/.well-known/oauth-protected-resource{PATH}"
             resp = PlainTextResponse(
@@ -190,13 +208,157 @@ async def _lifespan(_app):
         yield
 
 
-# ── OAuth (RFC 8414 / 7591 / 9728 + PKCE) — a spec-shaped wrapper around the
-# SAME static LOYD_MCP_TOKENS, for GUI "Connectors" clients that only speak
-# no-auth or real OAuth. See the OAUTH module docstring section for why the
-# "access_token" this hands back is literally just the static token. ──────────
-_AUTH_CODE_TTL = 300          # seconds a code is valid for, single-use
-_oauth_clients = {}           # client_id -> {"redirect_uris": [...]}
-_auth_codes = {}              # code -> {token, code_challenge, redirect_uri, client_id, expires}
+# ── OAuth (RFC 8414 / 7591 / 9728 / 6749 refresh + PKCE) — a spec-shaped layer
+# over the SAME static LOYD_MCP_TOKENS, for GUI "Connectors" clients that only
+# speak no-auth or real OAuth.
+#
+# Everything here is STATELESS, so a restart (or `/update`) never logs a
+# connector out and there's no DB to keep:
+#   * client_id      = signed blob carrying the registered redirect_uris
+#                      (server key, see _server_key) — /authorize and /token
+#                      verify the signature, so redirect_uri can't be swapped.
+#   * access/refresh = signed blob {user, kind, read-only?, client, exp}, HMAC'd
+#                      with a key derived from THAT USER'S static token. The
+#                      static token itself never leaves the box; rotating it in
+#                      LOYD_MCP_TOKENS instantly revokes every OAuth grant
+#                      minted from it. Nothing to keep in sync.
+# The one bit of state is auth codes (5-min, single-use) — losing them on
+# restart just means "click Authorize again".
+_AUTH_CODE_TTL = 300
+ACCESS_TTL = int(os.getenv("LOYD_MCP_ACCESS_TTL", "3600"))               # 1h
+REFRESH_TTL = int(os.getenv("LOYD_MCP_REFRESH_TTL", str(30 * 86400)))    # 30d, rolling
+_FAIL_WINDOW, _FAIL_MAX = 600, 8      # /authorize: ≤8 bad tokens per IP per 10 min
+_auth_codes = {}                      # code -> {token, ro, code_challenge, redirect_uri, client_id, expires}
+_auth_failures = {}                   # ip -> [timestamps]
+_TOKEN_PREFIX, _CLIENT_PREFIX = "loyd1.", "lc1."
+
+
+def _server_key() -> bytes:
+    """Signs client_ids. LOYD_MCP_OAUTH_SECRET if set, else derived from the
+    token set — stable across restarts, and changes (invalidating registrations,
+    which clients transparently redo) only when the tokens themselves change."""
+    secret = os.getenv("LOYD_MCP_OAUTH_SECRET", "")
+    material = secret or "|".join(sorted(TOKENS))
+    return hashlib.sha256(b"loyd-oauth-client-v1:" + material.encode()).digest()
+
+
+def _user_key(static_token: str) -> bytes:
+    return hashlib.sha256(b"loyd-oauth-token-v1:" + static_token.encode()).digest()
+
+
+def _sign(prefix: str, payload: dict, key: bytes) -> str:
+    body = _b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    mac = _b64url(hmac.new(key, (prefix + body).encode(), hashlib.sha256).digest())
+    return f"{prefix}{body}.{mac}"
+
+
+def _unsign(prefix: str, blob: str, key_for):
+    """Return the payload if `blob` is a validly-signed `prefix` blob, else None.
+    key_for(payload) -> key or None (lets the key depend on who it claims to be)."""
+    if not blob or not blob.startswith(prefix) or blob.count(".") < 2:
+        return None
+    body, _, mac = blob[len(prefix):].rpartition(".")
+    try:
+        payload = json.loads(_b64dec(body))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    key = key_for(payload)
+    if key is None:
+        return None
+    good = _b64url(hmac.new(key, (prefix + body).encode(), hashlib.sha256).digest())
+    return payload if hmac.compare_digest(good, mac) else None
+
+
+def _b64dec(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _static_tokens_for(user: str):
+    return [t for t, v in TOKENS.items() if v["user"] == user]
+
+
+def _mint(static_token: str, kind: str, ro: bool, cfp: str, ttl: int) -> str:
+    user = TOKENS[static_token]["user"]
+    return _sign(_TOKEN_PREFIX, {
+        "u": user, "k": kind, "ro": bool(ro), "c": cfp,
+        "exp": int(time.time()) + ttl, "n": secrets.token_urlsafe(6),
+    }, _user_key(static_token))
+
+
+def _client_fingerprint(client_id: str) -> str:
+    return hashlib.sha256(client_id.encode()).hexdigest()[:16]
+
+
+def _verify_minted(blob: str, kind: str):
+    """-> (static_token, payload) for a live, correctly-signed token of `kind`, else None.
+    Tries each static token belonging to the claimed user, so a user with
+    several tokens works and a rotated-away token no longer verifies."""
+    hit = []
+
+    def key_for(p):
+        for st in _static_tokens_for(str(p.get("u", ""))):
+            if _unsign(_TOKEN_PREFIX, blob, lambda _p, k=_user_key(st): k) is not None:
+                hit.append(st)
+                return _user_key(st)
+        return None
+
+    p = _unsign(_TOKEN_PREFIX, blob, key_for)
+    if p is None or p.get("k") != kind or int(p.get("exp", 0)) < time.time():
+        return None
+    return hit[0], p
+
+
+def identity_for(token: str):
+    """Bearer token -> {user, operator} or None. Accepts a static LOYD_MCP_TOKENS
+    value (CLI / config-file clients) or a live OAuth access token."""
+    if token in TOKENS:
+        return TOKENS[token]
+    v = _verify_minted(token, "a")
+    if v is None:
+        return None
+    st, p = v
+    base = TOKENS[st]
+    return {"user": base["user"], "operator": base["operator"] and not p.get("ro")}
+
+
+def _redirect_ok(uri: str) -> bool:
+    """https anywhere, http only to loopback (native apps, RFC 8252), or a
+    private-use app scheme (com.example.app:/cb). Never javascript:/data:/etc."""
+    try:
+        u = urlsplit(uri)
+    except ValueError:
+        return False
+    if u.fragment:
+        return False
+    if u.scheme == "https":
+        return bool(u.netloc)
+    if u.scheme == "http":
+        return (u.hostname or "") in _LOCAL_HOSTS
+    return "." in u.scheme and u.scheme not in ("javascript", "data", "file", "vbscript")
+
+
+def _client(client_id: str):
+    return _unsign(_CLIENT_PREFIX, client_id, lambda _p: _server_key())
+
+
+def _client_ip(request: Request) -> str:
+    # This binds 127.0.0.1 behind nginx/Cloudflare, so the forwarded headers are
+    # the real client; direct hits fall back to the socket peer.
+    h = request.headers
+    return (h.get("cf-connecting-ip") or h.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "?"))
+
+
+def _throttled(ip: str) -> bool:
+    now = time.time()
+    if len(_auth_failures) > 1000:                 # bound memory under a spray of IPs
+        for k in [k for k, v in _auth_failures.items() if not v or now - v[-1] > _FAIL_WINDOW]:
+            _auth_failures.pop(k, None)
+    recent = [t for t in _auth_failures.get(ip, []) if now - t < _FAIL_WINDOW]
+    _auth_failures[ip] = recent
+    return len(recent) >= _FAIL_MAX
 
 
 def _prune_expired_codes():
@@ -205,11 +367,22 @@ def _prune_expired_codes():
         _auth_codes.pop(code, None)
 
 
+def _with_query(uri: str, params: dict) -> str:
+    sep = "&" if urlsplit(uri).query else "?"
+    return f"{uri}{sep}{urlencode(params)}"
+
+
+_NO_FRAME = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'",
+             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+
+
 async def oauth_protected_resource(request: Request):
     base = _base_url(request)
     return JSONResponse({
         "resource": f"{base}{PATH}",
         "authorization_servers": [base],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": ["loyd"],
     })
 
 
@@ -221,31 +394,45 @@ async def oauth_authorization_server(request: Request):
         "token_endpoint": f"{base}/token",
         "registration_endpoint": f"{base}/register",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": ["loyd"],
+        "authorization_response_iss_parameter_supported": True,
     })
 
 
 async def oauth_register(request: Request):
-    """Dynamic Client Registration (RFC 7591) — pre-auth by design, this is
-    how a client learns its client_id, not how a human authenticates. No
-    client_secret: these are public clients (mobile/desktop apps) using PKCE,
-    same pattern every "public client, no secret" OAuth deployment uses."""
+    """Dynamic Client Registration (RFC 7591) — pre-auth by design: this is how a
+    client learns its client_id, not how a human authenticates. Public clients
+    (no secret) + PKCE. The client_id is a signed record of the redirect_uris,
+    so nothing is stored and a restart doesn't orphan the registration."""
     try:
         body = await request.json()
     except Exception:
-        body = {}
-    client_id = secrets.token_urlsafe(16)
-    redirect_uris = body.get("redirect_uris") or []
-    _oauth_clients[client_id] = {"redirect_uris": redirect_uris}
-    return JSONResponse({
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid_client_metadata",
+                             "error_description": "JSON object body required"}, status_code=400)
+    uris = body.get("redirect_uris")
+    if (not isinstance(uris, list) or not uris or len(uris) > 10
+            or not all(isinstance(u, str) and len(u) < 512 and _redirect_ok(u) for u in uris)):
+        return JSONResponse({"error": "invalid_redirect_uri",
+                             "error_description": "1-10 redirect_uris required: https, loopback http, "
+                                                  "or a private-use app scheme"}, status_code=400)
+    name = str(body.get("client_name") or "")[:64]
+    client_id = _sign(_CLIENT_PREFIX, {"r": uris, "n": name, "iat": int(time.time()), "j": secrets.token_urlsafe(6)}, _server_key())
+    out = {
         "client_id": client_id,
-        "redirect_uris": redirect_uris,
+        "client_id_issued_at": int(time.time()),
+        "redirect_uris": uris,
         "token_endpoint_auth_method": "none",
-        "grant_types": ["authorization_code"],
+        "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
-    }, status_code=201)
+    }
+    if name:
+        out["client_name"] = name
+    return JSONResponse(out, status_code=201)
 
 
 _AUTHORIZE_FORM = """<!doctype html><html><head><meta charset="utf-8">
@@ -253,19 +440,22 @@ _AUTHORIZE_FORM = """<!doctype html><html><head><meta charset="utf-8">
 <title>Connect to Loyd</title><style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,'Inter',sans-serif;background:#0a0f1a;min-height:100vh;
-  display:flex;align-items:center;justify-content:center}}
+  display:flex;align-items:center;justify-content:center;padding:16px}}
 .card{{width:100%;max-width:380px;padding:32px;background:#111827;border:1px solid #1e2d42;
   border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.5)}}
 .logo{{width:52px;height:52px;border-radius:12px;background:#7c6af7;color:#fff;
   display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;
   margin:0 auto 18px}}
 h1{{color:#e6edf3;font-size:16px;text-align:center;margin-bottom:4px}}
-p{{color:#8b949e;font-size:12px;text-align:center;margin-bottom:22px}}
+p{{color:#8b949e;font-size:12px;text-align:center;margin-bottom:22px;line-height:1.5}}
+p b{{color:#e6edf3}}
 label{{display:block;font-size:11px;font-weight:600;color:#8b949e;text-transform:uppercase;
   letter-spacing:.05em;margin-bottom:6px}}
-input{{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;
+input[type=password]{{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;
   padding:11px 14px;color:#e6edf3;font-size:14px;font-family:inherit;outline:none}}
-input:focus{{border-color:#7c6af7}}
+input[type=password]:focus{{border-color:#7c6af7}}
+.ro{{display:flex;gap:8px;align-items:center;margin-top:14px;color:#8b949e;font-size:12px;
+  text-transform:none;letter-spacing:0;font-weight:400}}
 button{{width:100%;margin-top:16px;background:#7c6af7;color:#fff;border:none;
   border-radius:8px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}}
 button:hover{{background:#8f80f9}}
@@ -275,11 +465,14 @@ button:hover{{background:#8f80f9}}
 <div class="card">
   <div class="logo">L</div>
   <h1>Connect to Loyd</h1>
-  <p>{client_desc} is requesting access. Paste one of your Loyd tokens below.</p>
+  <p><b>{client_desc}</b> wants access to Loyd's tools.<br>
+     After you authorize, you'll be sent to <b>{redirect_host}</b>.<br>
+     Only continue if you started this connection.</p>
   {error_html}
   <form method="post">
     <label for="token">Loyd Access Token</label>
     <input type="password" id="token" name="token" autofocus autocomplete="off" required>
+    <label class="ro"><input type="checkbox" name="readonly" value="1"> Read-only (no write tools; read-only shell)</label>
     <input type="hidden" name="params" value="{params}">
     <button type="submit">Authorize</button>
   </form>
@@ -287,92 +480,147 @@ button:hover{{background:#8f80f9}}
 </body></html>"""
 
 
+def _render_form(client, redirect_uri, params_blob, error="", status=200):
+    host = urlsplit(redirect_uri).netloc or urlsplit(redirect_uri).scheme
+    err = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    return HTMLResponse(_AUTHORIZE_FORM.format(
+        client_desc=html.escape(client.get("n") or "An app"),
+        redirect_host=html.escape(host), error_html=err, params=html.escape(params_blob)),
+        status_code=status, headers=_NO_FRAME)
+
+
+def _check_authorize_params(p):
+    """-> (client, error_response). Per RFC 6749 §4.1.2.1, a bad client_id or
+    redirect_uri is shown to the user, NEVER redirected (that's the open-redirect hole)."""
+    client = _client(p.get("client_id", ""))
+    if client is None:
+        return None, PlainTextResponse("invalid_client: unknown or tampered client_id — "
+                                       "remove and re-add the connector", status_code=400)
+    if p.get("redirect_uri", "") not in client["r"]:
+        return None, PlainTextResponse("invalid_request: redirect_uri not registered for this client",
+                                       status_code=400)
+    if (p.get("response_type", "code") != "code" or not p.get("code_challenge")
+            or p.get("code_challenge_method", "S256") != "S256"):
+        return None, PlainTextResponse("invalid_request: response_type=code and an S256 "
+                                       "code_challenge are required", status_code=400)
+    return client, None
+
+
 async def oauth_authorize(request: Request):
-    """GET renders the form; POST validates the token against TOKENS (the
-    SAME check BearerAuth does) and, on success, mints a short-lived
-    single-use code bound to that token + this client's PKCE challenge.
-    GET's params come from the URL query string; POST's come from the
-    'params' hidden field the form round-trips — POST never re-reads the
-    query string, which is empty on a same-origin form POST anyway."""
+    """GET renders the consent form; POST checks the pasted token (same TOKENS
+    map BearerAuth uses), then mints a 5-min single-use code bound to that
+    token, this client, its redirect_uri, and the PKCE challenge. POST takes its
+    params only from the form's hidden field, re-validated from scratch."""
     if request.method == "GET":
-        q = request.query_params
-        response_type = q.get("response_type", "code")
-        client_id = q.get("client_id", "")
-        redirect_uri = q.get("redirect_uri", "")
-        state = q.get("state", "")
-        code_challenge = q.get("code_challenge", "")
-        code_challenge_method = q.get("code_challenge_method", "S256")
-
-        if response_type != "code" or not redirect_uri or code_challenge_method != "S256" or not code_challenge:
-            return PlainTextResponse(
-                "invalid_request: response_type=code, redirect_uri, and S256 code_challenge are required",
-                status_code=400)
-
-        params_blob = urlencode({
-            "client_id": client_id, "redirect_uri": redirect_uri, "state": state,
-            "code_challenge": code_challenge,
-        })
-        client_desc = html.escape(client_id[:24] or "An app")
-        return HTMLResponse(_AUTHORIZE_FORM.format(
-            client_desc=client_desc, error_html="", params=html.escape(params_blob)))
+        q = dict(request.query_params)
+        client, err = _check_authorize_params(q)
+        if err:
+            return err
+        blob = urlencode({k: q.get(k, "") for k in
+                          ("client_id", "redirect_uri", "state", "code_challenge")})
+        return _render_form(client, q["redirect_uri"], blob)
 
     form = await request.form()
-    token = (form.get("token") or "").strip()
-    saved = dict(parse_qs(form.get("params") or ""))
-    saved = {k: v[0] for k, v in saved.items()}
+    blob = form.get("params") or ""
+    saved = {k: v[0] for k, v in parse_qs(blob).items()}
+    client, err = _check_authorize_params(saved)
+    if err:
+        return err
 
+    ip = _client_ip(request)
+    if _throttled(ip):
+        return _render_form(client, saved["redirect_uri"], blob,
+                            "Too many wrong tokens — wait 10 minutes and try again.", 429)
+    token = (form.get("token") or "").strip()
     if token not in TOKENS:
-        client_desc = html.escape(saved.get("client_id", "")[:24] or "An app")
-        err = '<div class="err">That token wasn\'t recognized — check it and try again.</div>'
-        return HTMLResponse(
-            _AUTHORIZE_FORM.format(client_desc=client_desc, error_html=err,
-                                    params=html.escape(form.get("params") or "")),
-            status_code=401)
+        _auth_failures.setdefault(ip, []).append(time.time())
+        return _render_form(client, saved["redirect_uri"], blob,
+                            "That token wasn't recognized — check it and try again.", 401)
 
     _prune_expired_codes()
-    code = secrets.token_urlsafe(24)
+    code = secrets.token_urlsafe(32)
     _auth_codes[code] = {
         "token": token,
-        "code_challenge": saved.get("code_challenge", ""),
-        "redirect_uri": saved.get("redirect_uri", ""),
-        "client_id": saved.get("client_id", ""),
+        "ro": form.get("readonly") == "1",
+        "code_challenge": saved["code_challenge"],
+        "redirect_uri": saved["redirect_uri"],
+        "client_id": saved["client_id"],
         "expires": time.time() + _AUTH_CODE_TTL,
     }
-    redirect = f"{saved.get('redirect_uri')}?{urlencode({'code': code, 'state': saved.get('state', '')})}"
-    return RedirectResponse(redirect, status_code=302)
+    params = {"code": code}
+    if saved.get("state"):
+        params["state"] = saved["state"]
+    params["iss"] = _base_url(request)                      # RFC 9207 mix-up defense
+    return RedirectResponse(_with_query(saved["redirect_uri"], params), status_code=302,
+                            headers={"Cache-Control": "no-store"})
+
+
+def _token_error(error, desc="", status=400):
+    body = {"error": error}
+    if desc:
+        body["error_description"] = desc
+    return JSONResponse(body, status_code=status,
+                        headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+
+def _token_response(static_token, ro, cfp):
+    return JSONResponse({
+        "access_token": _mint(static_token, "a", ro, cfp, ACCESS_TTL),
+        "token_type": "Bearer",
+        "expires_in": ACCESS_TTL,
+        "refresh_token": _mint(static_token, "r", ro, cfp, REFRESH_TTL),
+        "scope": "loyd",
+    }, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
 async def oauth_token(request: Request):
     form = await request.form()
     grant_type = form.get("grant_type")
-    if grant_type != "authorization_code":
-        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+    client_id = form.get("client_id", "")
 
-    code = form.get("code", "")
-    verifier = form.get("code_verifier", "")
-    redirect_uri = form.get("redirect_uri", "")
+    if grant_type == "authorization_code":
+        code = form.get("code", "")
+        verifier = form.get("code_verifier", "")
+        _prune_expired_codes()
+        entry = _auth_codes.pop(code, None)   # single-use: pop, not get
+        if entry is None or entry["expires"] < time.time():
+            return _token_error("invalid_grant", "code invalid, used, or expired")
+        if client_id and client_id != entry["client_id"]:
+            return _token_error("invalid_grant", "client_id mismatch")
+        if entry["redirect_uri"] != form.get("redirect_uri", entry["redirect_uri"]):
+            return _token_error("invalid_grant", "redirect_uri mismatch")
+        if not (43 <= len(verifier) <= 128):
+            return _token_error("invalid_grant", "code_verifier must be 43-128 chars")
+        expected = _b64url(hashlib.sha256(verifier.encode()).digest())
+        if not hmac.compare_digest(expected, entry["code_challenge"]):
+            return _token_error("invalid_grant", "PKCE verification failed")
+        if entry["token"] not in TOKENS:                 # rotated away mid-flow
+            return _token_error("invalid_grant", "token no longer valid")
+        return _token_response(entry["token"], entry["ro"], _client_fingerprint(entry["client_id"]))
 
-    _prune_expired_codes()
-    entry = _auth_codes.pop(code, None)   # single-use: pop, not get
-    if entry is None or entry["expires"] < time.time():
-        return JSONResponse({"error": "invalid_grant"}, status_code=400)
-    if entry["redirect_uri"] != redirect_uri:
-        return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
-                             status_code=400)
-    expected_challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
-    if not secrets.compare_digest(expected_challenge, entry["code_challenge"]):
-        return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"},
-                             status_code=400)
+    if grant_type == "refresh_token":
+        v = _verify_minted(form.get("refresh_token", ""), "r")
+        if v is None:
+            return _token_error("invalid_grant", "refresh_token invalid, expired, or revoked")
+        st, p = v
+        if client_id and _client_fingerprint(client_id) != p.get("c"):
+            return _token_error("invalid_grant", "refresh_token was issued to another client")
+        # rolling refresh: a fresh pair each time, bound to the same client,
+        # and a read-only grant stays read-only
+        return _token_response(st, p.get("ro"), p.get("c", ""))
 
-    return JSONResponse({
-        "access_token": entry["token"],     # literally the static LOYD_MCP_TOKENS value
-        "token_type": "Bearer",
-        "expires_in": 31536000,             # cosmetic — really lives/dies with the static token
-    })
+    return _token_error("unsupported_grant_type")
+
+
+async def healthz(_request: Request):
+    """Unauthenticated liveness probe for monitors / deploy checks. Public, so it
+    reveals nothing (not the target host, not the MCP path)."""
+    return JSONResponse({"ok": True})
 
 
 app = Starlette(
     routes=[
+        Route("/healthz", healthz),
         Route(f"/.well-known/oauth-protected-resource{PATH}", oauth_protected_resource),
         Route("/.well-known/oauth-protected-resource", oauth_protected_resource),
         Route("/.well-known/oauth-authorization-server", oauth_authorization_server),

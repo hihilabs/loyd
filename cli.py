@@ -16,19 +16,29 @@ REPL slash commands:
   /claude <q>   force one question onto cloud Claude (the default anyway)
   /model [name] show or hot-swap the local brain
   /tools        list the tools Loyd can call
+  /audit [n]    show the last n tool calls (who/what/outcome)
   /help         this help
   /exit         quit
 (`loyd "/claude ..."` also works as a one-shot.)
 """
 import argparse
+import functools
+import getpass
 import os
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
-from claude_backend import ClaudeAgent, ClaudeUnavailable   # noqa: E402
+from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online_status   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
+import audit                                       # noqa: E402
+
+try:
+    _ACTOR = f"cli:{getpass.getuser()}"
+except Exception:
+    _ACTOR = "cli:?"
+run_tool = functools.partial(execute_tool, actor=_ACTOR)   # every CLI tool call is audited
 
 
 def should_confirm(name, args):
@@ -36,7 +46,7 @@ def should_confirm(name, args):
     destructive run_shell command (so safe commands run free, dangerous ones prompt)."""
     if name in WRITE_TOOLS:
         return True
-    if name == "run_shell" and mode() == "operator":
+    if name in ("run_shell", "run_in_tmux") and mode() == "operator":
         return is_destructive(args.get("command", ""))
     return False
 
@@ -69,6 +79,7 @@ def make_printer():
             print(f"{DIM}{preview}{RST}")
         elif kind == "tool_declined":
             print(f"{RED}✗ declined: {data['name']}{RST}")
+            audit.record(_ACTOR, data["name"], data.get("args"), "declined")
         elif kind == "final":
             print(f"{GREEN}{data['text']}{RST}")
         elif kind == "error":
@@ -87,7 +98,7 @@ class Session:
         self._system = build_system(where(), mode())
         self.agent = LoydAgent(
             model=model, ollama_url=url, system=self._system,
-            tool_schemas=TOOL_SCHEMAS, execute=execute_tool,
+            tool_schemas=TOOL_SCHEMAS, execute=run_tool,
             max_iters=max_iters, on_event=self.printer,
             confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         self._claude = None
@@ -96,7 +107,7 @@ class Session:
         if self._claude is None:
             self._claude = ClaudeAgent(
                 model=self.claude_model, api_key=os.getenv("ANTHROPIC_API_KEY"),
-                tool_schemas=TOOL_SCHEMAS, execute=execute_tool, system=self._system,
+                tool_schemas=TOOL_SCHEMAS, execute=run_tool, system=self._system,
                 max_iters=self.max_iters, on_event=self.printer,
                 confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         return self._claude
@@ -132,6 +143,12 @@ def self_update():
         print(f"{DIM}{home} isn't a git checkout — re-run install.sh to update.{RST}")
         return
     print(f"{DIM}updating {home} …{RST}")
+    head = subprocess.run(["git", "-C", home, "symbolic-ref", "-q", "HEAD"],
+                          capture_output=True, text=True)
+    if head.returncode != 0:
+        print(f"{YEL}{home} is on a pinned commit (detached HEAD), not a branch — "
+              f"run `git -C {home} checkout main` first, then /update.{RST}")
+        return
     p = subprocess.run(["git", "-C", home, "pull", "--ff-only"], capture_output=True, text=True)
     out = (p.stdout + p.stderr).strip()
     if out:
@@ -155,6 +172,7 @@ def handle_slash(q, sess):
               f"/claude <q>  force cloud Claude (same tools)\n"
               f"/model [name] show or swap the local brain\n"
               f"/update       git-pull the latest Loyd and reload\n"
+              f"/audit [n]    show the last n tool calls from the audit log\n"
               f"/tools        list callable tools\n"
               f"/exit         quit{RST}")
     elif cmd == "/tools":
@@ -180,6 +198,16 @@ def handle_slash(q, sess):
             print(f"{DIM}usage: /claude <question>{RST}")
     elif cmd == "/update":
         self_update()
+    elif cmd == "/audit":
+        n = int(rest) if rest.isdigit() else 20
+        recs = audit.tail(n)
+        if not recs:
+            print(f"{DIM}audit log empty or off (LOYD_AUDIT_LOG){RST}")
+        for r in recs:
+            col = GREEN if r.get("outcome") == "ok" else RED
+            args = ", ".join(f"{k}={v!r}" for k, v in (r.get("args") or {}).items())
+            print(f"{DIM}{r.get('ts')} {r.get('actor')}{RST} {CYAN}{r.get('tool')}{RST}"
+                  f"({args[:120]}) {col}{r.get('outcome')}{RST}")
     elif cmd in ("/exit", "/quit", "/q"):
         return "exit"
     else:
@@ -192,13 +220,16 @@ def main():
     ap.add_argument("question", nargs="*", help="one-shot question (omit for interactive)")
     ap.add_argument("--model", default=os.getenv("OLLAMA_AI_MODEL", "qwen2.5-coder:7b"))
     ap.add_argument("--url", default=os.getenv("OLLAMA_URL", "http://localhost:11434"))
-    ap.add_argument("--claude-model", default=os.getenv("LOYD_CLAUDE_MODEL", "claude-opus-4-8"))
+    ap.add_argument("--claude-model", default=os.getenv("LOYD_CLAUDE_MODEL", DEFAULT_MODEL))
     ap.add_argument("--max-iters", type=int, default=8)
     args = ap.parse_args()
 
     sess = Session(args.model, args.url, args.claude_model, args.max_iters)
 
-    key = ("claude ready" if os.getenv("ANTHROPIC_API_KEY")
+    online, why = online_status() if os.getenv("ANTHROPIC_API_KEY") else (True, "")
+    key = ("claude ready" if os.getenv("ANTHROPIC_API_KEY") and online
+           else f"{YEL}OFFLINE ({why}) — local brain {args.model} answers{RST}{DIM}"
+           if os.getenv("ANTHROPIC_API_KEY")
            else f"{RED}no ANTHROPIC_API_KEY — every turn falls back to {args.model}{RST}{DIM}")
     m = mode()
     mtag = f"{RED}OPERATOR{RST}{DIM}" if m == "operator" else "read-only"

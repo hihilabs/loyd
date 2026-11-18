@@ -1,0 +1,28 @@
+{
+  "name": "hihilabs",
+  "description": "The hihilabs Django app on Tokyo7 (container hihilabs-hihilabs-1). SKELETON: every command is unverified until a human checks it against the real container and sets \"verified\": true.",
+  "commands": [
+    {"name": "run_tests", "mode": "read", "verified": false, "timeout": 600,
+     "description": "Run the Django test suite, optionally for one app.",
+     "params": {"app": {"type": "string", "pattern": "^[a-z][a-z0-9_.]{0,63}$", "required": false,
+                        "description": "app label or dotted test path; empty = all"}},
+     "run": "docker exec hihilabs-hihilabs-1 python manage.py test {app}"},
+    {"name": "check", "mode": "read", "verified": false, "timeout": 120,
+     "description": "Django system checks (configuration problems, missing settings).",
+     "run": "docker exec hihilabs-hihilabs-1 python manage.py check"},
+    {"name": "pending_migrations", "mode": "read", "verified": false, "timeout": 120,
+     "description": "Show migrations and whether model changes are missing a migration.",
+     "run": "docker exec hihilabs-hihilabs-1 python manage.py showmigrations && docker exec hihilabs-hihilabs-1 python manage.py makemigrations --check --dry-run"},
+    {"name": "logs", "mode": "read", "verified": false, "timeout": 60,
+     "description": "The last N lines of the app's log.",
+     "params": {"lines": {"type": "integer", "min": 1, "max": 2000, "default": 200,
+                          "description": "how many lines from the end"}},
+     "run": "docker logs --tail {lines} hihilabs-hihilabs-1 2>&1"},
+    {"name": "migrate", "mode": "write", "verified": false, "timeout": 600,
+     "description": "Apply pending database migrations.",
+     "run": "docker exec hihilabs-hihilabs-1 python manage.py migrate --noinput"},
+    {"name": "restart", "mode": "write", "verified": false, "timeout": 120,
+     "description": "Restart the hihilabs app container.",
+     "run": "docker restart hihilabs-hihilabs-1"}
+  ]
+}

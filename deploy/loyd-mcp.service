@@ -1,0 +1,34 @@
+# Hardened unit for a Loyd MCP server that ACTS ON ANOTHER HOST (LOYD_REMOTE set),
+# like loyd-mcp-tokyo7 on panel. The server itself then only needs to read its code,
+# write its audit log / audit findings, and use root's SSH key.
+# NOT YET APPLIED on panel (2026-11-18): install it in place of the current unit,
+# `systemctl daemon-reload`, then deploy with deploy/deploy.sh so the health check guards it.
+# If Loyd acts on THIS host (no LOYD_REMOTE), drop ProtectSystem: its tools need to write.
+[Unit]
+Description=Loyd MCP (acts on Tokyo7 via LOYD_REMOTE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/loyd/tokyo7.env
+ExecStart=/opt/loyd/.venv/bin/python /opt/loyd/loyd_mcp.py
+Restart=on-failure
+RestartSec=3
+User=root
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/root/.loyd /root/.ssh /opt/loyd/audits
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
