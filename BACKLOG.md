@@ -13,10 +13,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       format has a `trainable` flag that is ALWAYS false when `brain == "claude"` (Anthropic
       terms: no Claude output as model-training data). Include a `tools/export_training.py`
       that only exports `trainable: true` records and test that Claude records can't leak.
-- [ ] **Knowledge base + `search_kb` tool (retrieval, not training).** *(IN PROGRESS in PR #1 — skip)* `kb/` of markdown
-      notes: FINDINGS, runbooks, kit notes, and short "session notes" written at the end of
-      Claude research sessions. Stdlib-only ranked keyword search (no embeddings dependency
-      yet). Used as *context* for the local model; never fed to training.
 - [ ] **Brain router.** `LOYD_BRAIN_POLICY=claude-first | local-first | auto`. `auto` asks the
       local model one yes/no question ("routine maintenance a kit covers, or research /
       open-ended?") and routes routine work local, research to Claude, with escalation to
@@ -67,6 +63,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Knowledge base: `kb.py` (`search_kb`, `read_kb`; BM25 over sections of kb/*.md + repo docs, stdlib, offline), seeded with the Tokyo7 stack map and outage/deploy runbooks — PR #1
 - [x] `tail_logs` — covered by the `ops` kit's `ops_container_logs` (name + last N lines) — PR #1
 - [x] `audit` kit (`auditkit.py`): scope-file gate, discover/services (nmap, rate-limited), TLS, mail DNS, report; real-nmap test — PR #1
 - [x] Offline detection: one cached probe of the Claude API (120 s), mid-request network errors remembered, `LOYD_OFFLINE=1/0`, OFFLINE banner — PR #1

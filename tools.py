@@ -498,6 +498,9 @@ def _run_kit_command(line: str, timeout: int) -> str:
     return _cap(out.rstrip() or f"(no output; exit code {p.returncode})")
 
 
+import kb as _kb                                      # noqa: E402
+TOOL_SCHEMAS.extend(_kb.TOOL_SCHEMAS)                 # read-only notes search, local to Loyd
+_IMPL.update(_kb.IMPL)
 import kits as _kits                                  # noqa: E402
 import auditkit as _auditkit                          # noqa: E402
 _SELECTED_KITS = _kits.selected()
