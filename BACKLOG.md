@@ -13,7 +13,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       open-ended?") and routes routine work local, research to Claude, with escalation to
       Claude if the local run fails or hits the step limit. Default stays `claude-first`
       (policy 2026-09-04) until a human flips it.
-- [ ] **GPU modes: `online` / `offline` profiles** (`tools/gpu_mode.sh` + an operator-only,
+- [ ] **GPU modes: `online` / `offline` profiles** (`scripts/gpu_mode.sh` — never a `tools/` dir, it would shadow tools.py — + an operator-only,
       confirm-gated tool). `online`: vision owns both GPUs; local Loyd model loads on demand
       with a short ollama keep-alive so it never camps on VRAM. vision is fully local and keeps
       running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
