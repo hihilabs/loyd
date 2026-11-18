@@ -8,7 +8,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **Kit framework (declarative tool kits).** A kit is a file `kits/<name>.json`: named
+- [ ] **Kit framework (declarative tool kits).** *(IN PROGRESS in PR #1 — skip)* A kit is a file `kits/<name>.json`: named
       commands with typed, validated params (e.g. `run_tests(app)` →
       `docker exec hihilabs python manage.py test {app}`), each marked `read` or `write`,
       plus a short description and runbook notes. Kits become tools; `LOYD_KITS=ops,hihilabs`
