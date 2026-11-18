@@ -32,9 +32,9 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       (policy 2026-09-04) until a human flips it.
 - [ ] **GPU modes: `online` / `offline` profiles** (`tools/gpu_mode.sh` + an operator-only,
       confirm-gated tool). `online`: vision owns both GPUs; local Loyd model loads on demand
-      with a short ollama keep-alive so it never camps on VRAM. `offline`: pause the vision
-      workers (queue, don't drop), load the big local model across both cards; `online`
-      reverses it. Dry-run by default; container names come from config, not hardcoded.
+      with a short ollama keep-alive so it never camps on VRAM. vision is fully local and keeps
+      running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
+      when vision is idle or at night, never by pausing vision; `online` reverses it. Dry-run by default; container names come from config, not hardcoded.
       Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
 - [ ] **Offline detection.** Probe the Claude API once, cache the result a few minutes, skip
       straight to local while down; `LOYD_OFFLINE=1` override; OFFLINE in the banner.
