@@ -94,6 +94,32 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object",
             "properties": {"name": {"type": "string", "description": "exact container name"}},
             "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "run_in_tmux",
+        "description": "Start a LONG-running shell command (build, backup, big docker pull, test suite) as a "
+                       "background job in Loyd's own tmux server and return at once — use instead of run_shell "
+                       "for anything that may take over 30 seconds. Same rules as run_shell. Then read its output "
+                       "with job_output. People can watch it live: tmux -L loyd attach -t jobs.",
+        "parameters": {"type": "object",
+            "properties": {"name": {"type": "string", "description": "short job name: a-z 0-9 _ -"},
+                           "command": {"type": "string", "description": "the shell command to run"}},
+            "required": ["name", "command"]}}},
+    {"type": "function", "function": {
+        "name": "job_output",
+        "description": "Read the latest output of a background job started with run_in_tmux, and whether it "
+                       "is still running or finished (with its exit code).",
+        "parameters": {"type": "object",
+            "properties": {"name": {"type": "string", "description": "the job name"},
+                           "lines": {"type": "integer", "description": "lines from the end (default 50, max 400)"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "tmux_read",
+        "description": "Read what is on screen in someone's tmux pane (read-only), e.g. target 'dev:build' or "
+                       "'loyd:0.1', to see a build error or log they're looking at. Lists panes if target is empty.",
+        "parameters": {"type": "object",
+            "properties": {"target": {"type": "string", "description": "session:window.pane, or empty to list panes"},
+                           "lines": {"type": "integer", "description": "lines of history (default 60, max 400)"}},
+            "required": []}}},
     # --- write tools (v0.2): the harness requires operator confirmation before each runs ---
     {"type": "function", "function": {
         "name": "write_file",
@@ -207,16 +233,9 @@ def run_shell(command: str, readonly: bool = False) -> str:
     if not command:
         return "ERROR: empty command."
     ro = readonly or _MODE != "operator"
-    if not ro:
-        if _CATASTROPHIC.search(command):
-            return ("REFUSED: this is a catastrophic, irreversible command (disk wipe, "
-                    "system-root delete, or power-off). Loyd never runs it, even in operator "
-                    "mode — do it by hand if you truly mean to.")
-        # non-catastrophic commands run; the harness confirms destructive ones first.
-    elif _BLOCKED.search(command):
-        return ("REFUSED: this looks like a mutating/destructive command and Loyd is in "
-                "read-only mode. Set LOYD_MODE=operator to allow changes (destructive ones "
-                "still prompt for confirmation), or use a confirm-gated write tool.")
+    refusal = _shell_gate(command, ro)      # the harness confirms destructive ones first
+    if refusal:
+        return refusal
     try:
         p = _exec(command, ro=ro)
     except subprocess.TimeoutExpired:
@@ -299,6 +318,94 @@ def get_container_status(name: str) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
+JOB_SERVER = "loyd"            # tmux -L loyd: Loyd's own tmux server, never the user's sessions
+JOB_SESSION = "jobs"
+JOB_LOG_DIR = "/tmp/loyd-jobs"
+_JOB_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_TMUX_TARGET = re.compile(r"^[A-Za-z0-9_-]{1,64}(:[A-Za-z0-9_-]{1,64}(\.[0-9]{1,3})?)?$")
+
+
+def _shell_gate(command: str, ro: bool):
+    """The run_shell rules, shared: None if allowed, else the refusal text."""
+    if not ro:
+        if _CATASTROPHIC.search(command):
+            return ("REFUSED: this is a catastrophic, irreversible command (disk wipe, "
+                    "system-root delete, or power-off). Loyd never runs it, even in operator "
+                    "mode — do it by hand if you truly mean to.")
+        return None
+    if _BLOCKED.search(command):
+        return ("REFUSED: this looks like a mutating/destructive command and Loyd is in "
+                "read-only mode. Set LOYD_MODE=operator to allow changes (destructive ones "
+                "still prompt for confirmation), or use a confirm-gated write tool.")
+    return None
+
+
+def run_in_tmux(name: str, command: str, readonly: bool = False) -> str:
+    name, command = (name or "").strip(), (command or "").strip()
+    if not _JOB_NAME.match(name):
+        return "ERROR: job name must be 1-32 chars of a-z 0-9 _ - (starting with a letter or digit)."
+    if not command:
+        return "ERROR: empty command."
+    ro = readonly or _MODE != "operator"
+    refusal = _shell_gate(command, ro)
+    if refusal:
+        return refusal
+    log = f"{JOB_LOG_DIR}/{name}.log"
+    inner = (f"{{ {command}\n}} 2>&1 | tee -a {log}; "
+             f"echo \"[loyd-job exit ${{PIPESTATUS[0]}}]\" | tee -a {log}")
+    t = f"tmux -L {JOB_SERVER}"
+    script = (
+        f"mkdir -p {JOB_LOG_DIR} && "
+        f"{{ {t} has-session -t {JOB_SESSION} 2>/dev/null || "
+        f"{t} new-session -d -s {JOB_SESSION} -n idle; }} && "
+        f"{t} set-option -g -w remain-on-exit on >/dev/null && "
+        f"if {t} list-windows -t {JOB_SESSION} -F '#{{window_name}}' | grep -qx {name}; then "
+        f"echo 'ERROR: a job named {name} already exists — pick another name, or read it with job_output'; exit 1; fi && "
+        f": > {log} && {t} new-window -d -t {JOB_SESSION} -n {name} bash -c {shlex.quote(inner)} && "
+        f"echo 'started job {name}. Read it with job_output; watch live: tmux -L {JOB_SERVER} attach -t {JOB_SESSION}'")
+    try:
+        p = _exec(script, ro=ro)
+    except Exception as e:
+        return f"ERROR starting job: {type(e).__name__}: {e}"
+    out = (p.stdout + p.stderr).strip()
+    return out if out else f"(no output; exit code {p.returncode})"
+
+
+def job_output(name: str, lines: int = 50, readonly: bool = False) -> str:
+    name = (name or "").strip()
+    if not _JOB_NAME.match(name):
+        return "ERROR: bad job name."
+    n = max(1, min(int(lines or 50), 400))
+    log = f"{JOB_LOG_DIR}/{name}.log"
+    ro = readonly or _MODE != "operator"
+    script = (f"[ -f {log} ] || {{ echo 'ERROR: no job named {name}'; exit 1; }}; "
+              f"if grep -q '^\\[loyd-job exit ' {log}; then "
+              f"echo \"status: finished ($(grep '^\\[loyd-job exit ' {log} | tail -1 | tr -d '[]'))\"; "
+              f"else echo 'status: running'; fi; echo; tail -n {n} {log}")
+    try:
+        p = _exec(script, ro=ro)
+    except Exception as e:
+        return f"ERROR reading job: {type(e).__name__}: {e}"
+    return _cap((p.stdout + p.stderr).rstrip())
+
+
+def tmux_read(target: str = "", lines: int = 60, readonly: bool = False) -> str:
+    target = (target or "").strip()
+    ro = readonly or _MODE != "operator"
+    if not target:
+        cmd = "tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}  #{window_name}  #{pane_current_command}' 2>&1"
+    elif not _TMUX_TARGET.match(target):
+        return "ERROR: target must look like session, session:window or session:window.pane."
+    else:
+        n = max(1, min(int(lines or 60), 400))
+        cmd = f"tmux capture-pane -p -J -t {shlex.quote(target)} -S -{n} 2>&1 | sed -e :a -e '/^\\n*$/{{$d;N;ba' -e '}}'"
+    try:
+        p = _exec(cmd, ro=ro)
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+    return _cap((p.stdout or p.stderr or "(empty)").rstrip())
+
+
 def write_file(path: str, content: str) -> str:
     """Writes on the host Loyd ACTS on — over SSH (content via stdin) when
     LOYD_REMOTE is set, so it lands on the same box run_shell/read_file see."""
@@ -363,6 +470,9 @@ _IMPL = {
     "run_shell": lambda a, ro: run_shell(a.get("command", ""), readonly=ro),
     "read_file": lambda a, ro: read_file(a.get("path", ""), a.get("max_lines"), readonly=ro),
     "get_container_status": lambda a, ro: get_container_status(a.get("name", "")),
+    "run_in_tmux": lambda a, ro: run_in_tmux(a.get("name", ""), a.get("command", ""), readonly=ro),
+    "job_output": lambda a, ro: job_output(a.get("name", ""), a.get("lines", 50), readonly=ro),
+    "tmux_read": lambda a, ro: tmux_read(a.get("target", ""), a.get("lines", 60), readonly=ro),
     "write_file": lambda a, ro: write_file(a.get("path", ""), a.get("content", "")),
     "restart_container": lambda a, ro: restart_container(a.get("name", "")),
     "prune_images": lambda a, ro: prune_images(a.get("scope", "dangling")),

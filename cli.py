@@ -46,7 +46,7 @@ def should_confirm(name, args):
     destructive run_shell command (so safe commands run free, dangerous ones prompt)."""
     if name in WRITE_TOOLS:
         return True
-    if name == "run_shell" and mode() == "operator":
+    if name in ("run_shell", "run_in_tmux") and mode() == "operator":
         return is_destructive(args.get("command", ""))
     return False
 

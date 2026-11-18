@@ -161,6 +161,14 @@ log survives), with an "N lines omitted" marker. The CLI caps at 50 lines / 2.5k
 for the local 7B; the MCP server defaults to 400 lines / 20k chars for full Claude.
 Tune with `LOYD_MAX_OUTPUT_LINES` / `LOYD_MAX_OUTPUT_CHARS`.
 
+## Long jobs and tmux
+
+`run_shell` stops at 30 s. For builds, backups and big pulls Loyd uses `run_in_tmux`
+(same rules as `run_shell`), which starts the command in Loyd's **own** tmux server and
+returns at once; `job_output` reads it back with its exit code. Watch jobs live with
+`tmux -L loyd attach -t jobs`; logs are in `/tmp/loyd-jobs/`. `tmux_read` lets Loyd read
+a pane in *your* tmux sessions (read-only), e.g. "what's failing in dev:build?".
+
 ## Kits
 
 `LOYD_KITS=ops,netdiag,hihilabs` adds each kit's verified commands as tools named

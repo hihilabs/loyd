@@ -37,11 +37,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       on 2026-11-18, see `/root/loyd-deploy-check.sh` on panel). Add systemd hardening
       (`NoNewPrivileges`, `ProtectSystem=strict` + `ReadWritePaths` for the audit log,
       `PrivateTmp`). Document in MCP.md. Dry-run mode that prints steps.
-- [ ] **tmux tools.** *(IN PROGRESS in PR #1 — skip)* `run_in_tmux(name, command)` starts a long job (build, backup,
-      `docker pull`) in a named detached tmux window and returns at once, beating
-      `run_shell`'s 30 s timeout; `tmux_read(target, lines)` captures a pane's recent output
-      (read-only) so "what's failing in my build pane?" works. Writes go through the
-      operator/confirm/audit path like any write tool; window names validated.
 - [ ] **`audit` kit — authorized network audits only, scope-gated.** Loads only when a scope
       file `audits/<client>.json` exists: client, who authorized it, authorization reference,
       allowed CIDRs + domains, start/expiry, intensity (`gentle` default). EVERY audit tool
@@ -71,6 +66,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Needs a human
 
+- [ ] Install mosh on Tokyo7 (Unraid: un-get / NerdTools) so `mosh tokyo7 -- tmux new -A -s loyd loyd` works from the phone; Termux + Tailscale on the Samsung.
 - [ ] Verify the `hihilabs` kit commands (`kits/hihilabs.json`: container name, test runner, migrate) and set `LOYD_KITS=ops,hihilabs` on the MCP server against the real container/repo and flip
       `"verified": true` (first app-dev kit, chosen 2026-11-18).
 - [ ] Decide if/when to flip `LOYD_BRAIN_POLICY` to `auto` (reverses "GPU box never primary").
@@ -87,6 +83,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] tmux tools: `run_in_tmux` (Loyd's own `tmux -L loyd` server, run_shell's rules), `job_output`, `tmux_read` — live-tested on Tokyo7 — PR #1
 - [x] `netdiag` kit (11 read-only commands incl. layered `triage`), all run live on Tokyo7 2026-11-18 — PR #1
 - [x] Kit framework: `kits.py`, `kits/ops.json` (verified, read-only), `kits/hihilabs.json` skeleton (unverified) — PR #1
 - [x] OAuth completed (signed short-lived tokens, refresh, redirect validation) — PR #1
