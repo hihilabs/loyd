@@ -23,6 +23,8 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       `self_update` refusing on a detached HEAD.
 ## Needs a human
 
+- [ ] camagent: decide on agreement-gated auto-accept (both models agree → accept, else review) and Qwen + valid-list snap for refrigerant (36% → 86%). See `kb/vision-accuracy.md`.
+- [ ] Fix the golden labels from `golden_second_check_20260922.md` (a person confirms each), then re-run `scripts/vision_eval.py`.
 - [ ] Optional: switch panel to the hardened `deploy/loyd-mcp.service` (review the paths first), then redeploy with `deploy/deploy.sh`.
 - [ ] For field audits: install nmap on the field device (laptop / Termux: `pkg install nmap dnsutils openssl-tool`), write the scope file from the client's written authorization, then `LOYD_KITS=...,audit`.
 - [ ] Install mosh on Tokyo7 (Unraid: un-get / NerdTools) so `mosh tokyo7 -- tmux new -A -s loyd loyd` works from the phone; Termux + Tailscale on the Samsung.
@@ -42,6 +44,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] Vision accuracy measured (`scripts/vision_eval.py`, `kb/vision-accuracy.md`): agreement-gated auto-accept and Qwen+snap for refrigerant are the big wins — 2026-11-19
 - [x] Brain router: `brain.py` + `LOYD_BRAIN_POLICY=claude-first|local-first|auto` (default claude-first; auto asks local one YES/NO, doubt → Claude; local-first escalates on error/empty/step limit via `LoydAgent.last_outcome`) — tests/test_brain.py
 - [x] `audit_tail` (operator-only, filter by actor/outcome) and per-identity MCP rate limit (`LOYD_MCP_RATE`, default 60/min, throttles audited) — PR #1
 - [x] Trace recorder: `loydtrace.py` (`LOYD_TRACE_DIR`), `/good` `/bad` ratings in the CLI, `scripts/export_training.py` (local + rated-good only; Claude traces refused twice, incl. a tampered-file test) — PR #1

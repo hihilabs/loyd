@@ -99,9 +99,10 @@ def test_shipped_kits_load(name):
     assert kit["commands"]
 
 
-def test_hihilabs_kit_is_unverified_until_a_human_checks():
+def test_hihilabs_write_commands_stay_unverified_until_a_supervised_run():
     kit = kits.load_kit(os.path.join(ROOT, "kits", "hihilabs.json"))
-    assert not any(c.get("verified") for c in kit["commands"])
+    assert not any(c.get("verified") for c in kit["commands"] if c["mode"] == "write")
+    assert {c["name"] for c in kit["commands"] if c.get("verified")} >= {"check", "pending_migrations", "logs"}
 
 
 def test_ops_kit_renders_through_real_runner(monkeypatch):
