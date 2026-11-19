@@ -131,6 +131,9 @@ class LoydAgent:
         # Predicate: does THIS call need confirmation? Defaults to "is a write tool";
         # callers can widen it (e.g. also confirm destructive run_shell in operator mode).
         self.should_confirm = should_confirm or (lambda name, args: name in self.write_tools)
+        # How the last run() ended: "final" | "empty" | "error" | "step_limit" | "no_executor".
+        # The brain router escalates to Claude on anything but "final".
+        self.last_outcome = None
 
     def _chat(self, messages, tools=None):
         body = json.dumps({
@@ -150,6 +153,7 @@ class LoydAgent:
         messages = [{"role": "system", "content": self.system},
                     {"role": "user", "content": user_message}]
         seen = {}   # key -> result, so identical repeat calls are cached, not re-run
+        self.last_outcome = None
         for step in range(self.max_iters):
             # On the last allowed step, force a text answer (no tools) so the model
             # concludes instead of spiralling through more exploratory calls.
@@ -168,16 +172,22 @@ class LoydAgent:
                 # brain looked like a successful empty answer.
                 err = f"[Loyd error talking to the model: {type(e).__name__}: {e}]"
                 self.on_event("error", {"text": err})
+                self.last_outcome = "error"
                 return err
             name, args, source = (None, None, "none") if last else _extract_call(msg)
 
             if name is None:
                 answer = (msg.get("content") or "").strip()
                 self.on_event("final", {"text": answer, "dt": dt})
+                # A conclusion forced by the last-step guard (after tool steps) is
+                # the step limit in disguise; an empty answer is no answer.
+                self.last_outcome = ("step_limit" if last and step > 0
+                                     else "empty" if not answer else "final")
                 return answer
 
             self.on_event("tool_call", {"name": name, "args": args, "source": source, "dt": dt})
             if not self.execute:
+                self.last_outcome = "no_executor"
                 return "[Loyd has no tool executor configured]"
 
             if self.confirm and self.should_confirm(name, args) and not self.confirm(name, args):
@@ -206,4 +216,5 @@ class LoydAgent:
                 messages.append({"role": "user",
                                  "content": f"Observation from {name}:\n{obs}\n\n"
                                             f"Answer now if you can, or call a DIFFERENT tool."})
+        self.last_outcome = "step_limit"
         return "[Loyd hit the step limit without finishing — try narrowing the request]"
