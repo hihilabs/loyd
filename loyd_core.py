@@ -16,6 +16,9 @@ import re
 import time
 import urllib.request
 
+import gpumode
+
+
 def build_system(acts="local", mode="readonly"):
     """System prompt tailored to WHERE Loyd is acting (so it never guesses the host)
     and what it's allowed to do (readonly vs operator)."""
@@ -136,11 +139,15 @@ class LoydAgent:
         self.last_outcome = None
 
     def _chat(self, messages, tools=None):
-        body = json.dumps({
+        payload = {
             "model": self.model, "stream": False,
             "tools": self.tool_schemas if tools is None else tools,
             "options": {"num_ctx": self.num_ctx}, "messages": messages,
-        }).encode()
+        }
+        ka = gpumode.keep_alive()          # GPU mode online: don't camp on vision's VRAM
+        if ka:
+            payload["keep_alive"] = ka
+        body = json.dumps(payload).encode()
         req = urllib.request.Request(self.url, data=body,
                                      headers={"Content-Type": "application/json"})
         t0 = time.time()
