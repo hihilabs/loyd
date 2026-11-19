@@ -8,12 +8,12 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **GPU modes: `online` / `offline` profiles** (`scripts/gpu_mode.sh` — never a `tools/` dir, it would shadow tools.py — + an operator-only,
-      confirm-gated tool). `online`: vision owns both GPUs; local Loyd model loads on demand
-      with a short ollama keep-alive so it never camps on VRAM. vision is fully local and keeps
-      running offline (decided 2026-11-18), so `offline` gives Loyd's bigger model GPU1 only
-      when vision is idle or at night, never by pausing vision; `online` reverses it. Dry-run by default; container names come from config, not hardcoded.
-      Hooked to offline detection (suggest the switch; don't auto-flip without confirm).
+- [ ] **GPU modes 2/3: operator-only, confirm-gated `gpu_mode` tool** wrapping
+      `scripts/gpu_mode.sh` (status any time; online/offline run dry first, `--apply` only after
+      confirm). Local Loyd reads `STATE_FILE` and sends its `keep_alive` with each ollama call so
+      the small model never camps on VRAM in `online`.
+- [ ] **GPU modes 3/3: hook to offline detection** — when Loyd goes OFFLINE, suggest
+      `gpu_mode offline` (and `online` when back); never auto-flip without confirm.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
       repeats a near-identical call before concluding. After a repeat is detected, drop the
       tools for the next step (force a text answer). Tests with a fake ollama server.
@@ -44,6 +44,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] GPU modes 1/3: `scripts/gpu_mode.sh online|offline|status [--apply]` (dry-run default, config file `deploy/gpu-mode.env.example`, offline only when vision is idle or in the night window, never pauses vision) — tests/test_gpu_mode.py
 - [x] Vision accuracy measured (`scripts/vision_eval.py`, `kb/vision-accuracy.md`): agreement-gated auto-accept and Qwen+snap for refrigerant are the big wins — 2026-11-19
 - [x] Brain router: `brain.py` + `LOYD_BRAIN_POLICY=claude-first|local-first|auto` (default claude-first; auto asks local one YES/NO, doubt → Claude; local-first escalates on error/empty/step limit via `LoydAgent.last_outcome`) — tests/test_brain.py
 - [x] `audit_tail` (operator-only, filter by actor/outcome) and per-identity MCP rate limit (`LOYD_MCP_RATE`, default 60/min, throttles audited) — PR #1
