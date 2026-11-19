@@ -6,7 +6,7 @@ A self-hosted dev/ops assistant for the hihilabs stack (Tokyo7 + the VPS). Loyd 
 | Piece | What it is |
 |---|---|
 | `tools.py` | The tools: `run_shell`, `read_file`, `get_container_status`, and the operator writes `write_file` / `restart_container` / `prune_images`. Act locally or on `LOYD_REMOTE` over SSH. Read-only rules, a catastrophic-command backstop, output trimming, audit. |
-| `cli.py` (`loyd`) | Terminal assistant. Cloud Claude by default, the local Ollama model (qwen2.5-coder:7b) as fallback; y/N confirm on every write. |
+| `cli.py` (`loyd`) | Terminal assistant. Cloud Claude by default, the local Ollama model (qwen2.5-coder:7b) as fallback (`LOYD_BRAIN_POLICY=claude-first\|local-first\|auto`, see `brain.py`); y/N confirm on every write. |
 | `loyd_mcp.py` | The same tools over remote MCP, with OAuth, for claude.ai / the Claude apps / Desktop / VS Code. |
 | `audit.py` | One JSON line per tool call: who, what, outcome. |
 | `kb.py` + `kb/` | Notes and runbooks Loyd searches (`search_kb`, `read_kb`) — how the stack is wired, past fixes, procedures. Works offline. Add a note: drop a `.md` in `kb/` with `<!-- source: human -->` on line 1. |

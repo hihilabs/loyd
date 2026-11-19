@@ -8,6 +8,8 @@ Loyd CLI — talk to your local dev/ops assistant.
 Cloud Claude answers by default; the local Ollama brain is the fallback for
 when the cloud path can't be reached (policy 2026-09-04 — the GPU box is never
 primary, its uptime isn't ours to guarantee). Both share the same tools.
+LOYD_BRAIN_POLICY=claude-first|local-first|auto changes that (see brain.py);
+the default stays claude-first until a human flips it.
 
 The local brain is swappable:  --model cogito:8b  or  OLLAMA_AI_MODEL=cogito:8b loyd ...
 
@@ -34,6 +36,7 @@ from loyd_core import LoydAgent, build_system     # noqa: E402
 from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online_status   # noqa: E402
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
 import audit                                       # noqa: E402
+import brain                                       # noqa: E402
 import loydtrace as _trace                             # noqa: E402
 
 try:
@@ -140,6 +143,40 @@ class Session:
         self._traced(self.claude(), "claude", self.claude_model, q)
 
     def ask(self, q):
+        """Route one turn per LOYD_BRAIN_POLICY (brain.py)."""
+        pol, warn = brain.policy()
+        if warn:
+            print(f"{YEL}{warn}{RST}", file=sys.stderr)
+        path, why = brain.plan(pol, q, self._classify_chat)
+        if pol != "claude-first":
+            print(f"{DIM}⇄ {path} ({why}){RST}", file=sys.stderr)
+        if path == "local-first":
+            self.ask_local_first(q)
+        else:
+            self.ask_claude_first(q)
+
+    def _classify_chat(self, messages):
+        """One tool-less question to the local brain, for the auto router."""
+        msg, _ = self.agent._chat(messages, tools=[])
+        return msg.get("content") or ""
+
+    def ask_local_first(self, q):
+        """Local brain first; escalate to Claude if the local run errored, came
+        back empty, or hit the step limit. Escalation restarts the task on Claude
+        (writes stay confirm-gated, so nothing runs twice without a yes)."""
+        self.ask_local(q)
+        outcome = self.agent.last_outcome
+        if outcome == "final":
+            return
+        print(f"{DIM}↑ local brain ended with {outcome} — escalating to Claude{RST}",
+              file=sys.stderr)
+        try:
+            self.ask_claude(q)
+        except ClaudeUnavailable as e:
+            print(f"{YEL}cloud unavailable too ({e}) — the local answer above is all there is{RST}",
+                  file=sys.stderr)
+
+    def ask_claude_first(self, q):
         """The default path: Claude, with the local brain picking up slack.
 
         Falling back is only safe because ClaudeUnavailable is raised before
@@ -262,7 +299,7 @@ def main():
     m = mode()
     mtag = f"{RED}OPERATOR{RST}{DIM}" if m == "operator" else "read-only"
     print(f"{DIM}Loyd · {args.claude_model} · fallback brain={args.model} @ {args.url} · "
-          f"acts={where()} · mode={mtag} · "
+          f"acts={where()} · mode={mtag} · brain={brain.policy()[0]} · "
           f"{len(TOOL_SCHEMAS)} tools ({len(WRITE_TOOLS)} write, confirm-gated) · {key}{RST}",
           file=sys.stderr)
 
