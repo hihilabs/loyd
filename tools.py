@@ -551,6 +551,14 @@ def _audit_exec(cmd: str, timeout: int):
 if "audit" in _SELECTED_KITS:                         # Python kit: scope logic can't be JSON
     _auditkit.install(TOOL_SCHEMAS, _IMPL, WRITE_TOOLS, _audit_exec, _cap)
 
+import gpumode as _gpumode                            # noqa: E402
+_gpumode.install(TOOL_SCHEMAS, _IMPL, OPERATOR_TOOLS, _exec, _cap)   # only with LOYD_GPU_MODE_CONFIG
+
+
+def needs_confirm(name: str, args: dict) -> bool:
+    """Tool calls that always need the operator's y/N: write tools, and a gpu_mode apply."""
+    return name in WRITE_TOOLS or _gpumode.needs_confirm(name, args)
+
 
 def execute_tool(name: str, args: dict, actor: str = "local", readonly: bool = False) -> str:
     """Dispatch a tool call and audit it. `actor` is who asked (e.g. "mcp:alice",

@@ -8,10 +8,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **GPU modes 2/3: operator-only, confirm-gated `gpu_mode` tool** wrapping
-      `scripts/gpu_mode.sh` (status any time; online/offline run dry first, `--apply` only after
-      confirm). Local Loyd reads `STATE_FILE` and sends its `keep_alive` with each ollama call so
-      the small model never camps on VRAM in `online`.
 - [ ] **GPU modes 3/3: hook to offline detection** — when Loyd goes OFFLINE, suggest
       `gpu_mode offline` (and `online` when back); never auto-flip without confirm.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
@@ -44,6 +40,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] GPU modes 2/3: operator-only `gpu_mode` tool (`gpumode.py`; dry run first, apply only after y/N and a passing dry run; on with `LOYD_GPU_MODE_CONFIG`) + local brain sends the recorded `keep_alive` in `online` (`LOYD_GPU_MODE_STATE`) — tests/test_gpumode_tool.py
 - [x] GPU modes 1/3: `scripts/gpu_mode.sh online|offline|status [--apply]` (dry-run default, config file `deploy/gpu-mode.env.example`, offline only when vision is idle or in the night window, never pauses vision) — tests/test_gpu_mode.py
 - [x] Vision accuracy measured (`scripts/vision_eval.py`, `kb/vision-accuracy.md`): agreement-gated auto-accept and Qwen+snap for refrigerant are the big wins — 2026-11-19
 - [x] Brain router: `brain.py` + `LOYD_BRAIN_POLICY=claude-first|local-first|auto` (default claude-first; auto asks local one YES/NO, doubt → Claude; local-first escalates on error/empty/step limit via `LoydAgent.last_outcome`) — tests/test_brain.py

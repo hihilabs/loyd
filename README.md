@@ -11,6 +11,7 @@ A self-hosted dev/ops assistant for the hihilabs stack (Tokyo7 + the VPS). Loyd 
 | `audit.py` | One JSON line per tool call: who, what, outcome. |
 | `kb.py` + `kb/` | Notes and runbooks Loyd searches (`search_kb`, `read_kb`) — how the stack is wired, past fixes, procedures. Works offline. Add a note: drop a `.md` in `kb/` with `<!-- source: human -->` on line 1. |
 | `loydtrace.py` | Opt-in traces (`LOYD_TRACE_DIR`) of each answer for evaluation; rate with `/good` `/bad`. `scripts/export_training.py` exports only local-model answers a person rated good — never Claude output. |
+| `gpumode.py` + `scripts/gpu_mode.sh` | Operator-only `gpu_mode` tool (status / online / offline): shares the GPU between vision and Loyd's big model, dry run first, y/N on apply, never pauses vision. On with `LOYD_GPU_MODE_CONFIG` (`deploy/gpu-mode.env.example`); `LOYD_GPU_MODE_STATE` makes the local brain send the short keep-alive in `online`. |
 | `auditkit.py` | Scope-gated network audit tools for authorized client audits (`audits/README.md`). |
 | `kits.py` + `kits/*.json` | Declarative tool kits: vetted commands with validated params, per project (`LOYD_KITS=ops,hihilabs`). Write commands are confirm-gated; unverified commands stay hidden. |
 

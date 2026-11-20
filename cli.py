@@ -34,7 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from loyd_core import LoydAgent, build_system     # noqa: E402
 from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online_status   # noqa: E402
-from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive  # noqa: E402
+from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive, needs_confirm  # noqa: E402
 import audit                                       # noqa: E402
 import brain                                       # noqa: E402
 import loydtrace as _trace                             # noqa: E402
@@ -48,8 +48,9 @@ run_tool = functools.partial(execute_tool, actor=_ACTOR)   # every CLI tool call
 
 def should_confirm(name, args):
     """Which tool calls get a y/N. Write tools always; in operator mode also any
-    destructive run_shell command (so safe commands run free, dangerous ones prompt)."""
-    if name in WRITE_TOOLS:
+    destructive run_shell command (so safe commands run free, dangerous ones prompt).
+    gpu_mode asks only when apply=true (status and dry runs change nothing)."""
+    if needs_confirm(name, args):
         return True
     if name in ("run_shell", "run_in_tmux") and mode() == "operator":
         return is_destructive(args.get("command", ""))
