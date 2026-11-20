@@ -15,6 +15,10 @@ If an item turns out bigger than one PR, split it here and do the first piece.
       the conclude-guard on the last step, confirm/decline path — using a stub `/api/chat`.
 - [ ] **Tests for `cli.py`**: `should_confirm`, `handle_slash` (`/tools`, `/model`, `/audit`),
       `self_update` refusing on a detached HEAD.
+- [ ] **DSPy prototype: auto-router classifier** (see `kb/dspy.md`): `scripts/dspy_router.py`
+      runs a DSPy version of `brain.py`'s YES/NO router on exported rated traces and reports its
+      accuracy next to the current prompt. Optional deps in `requirements-dspy.txt`; local models
+      only; tests must not need DSPy installed. Needs enough rated traces first.
 ## Needs a human
 
 - [ ] camagent: decide on agreement-gated auto-accept (both models agree → accept, else review) and Qwen + valid-list snap for refrigerant (36% → 86%). See `kb/vision-accuracy.md`.
