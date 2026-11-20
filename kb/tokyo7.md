@@ -29,3 +29,16 @@
 ## Tools on Tokyo7
 - Present: ping, traceroute, tracepath, dig, nslookup, ss, ip, curl, openssl, python3, tmux 3.5a.
 - Missing: mtr, nc, nmap, mosh-server.
+
+## Appdata backup and Plex (changed 2026-11-20)
+- The appdata.backup plugin runs daily at 00:00 (`/boot/config/plugins/appdata.backup/`), containers one after another; a full run takes about 3 hours. It used to stop Plex for 5–10 minutes whenever it reached it (between 03:00 and 07:00).
+- Since 2026-11-20 Plex-Media-Server is set to `dontStop: yes`, `verifyBackup: no` in `config.json`, so it's backed up live. Plex's own database backups (every 3 days, in `.../Plug-in Support/Databases/`) are the consistent copy. Undo: `config.json.bak-20261120-plexlive`.
+- Auto-update is on for every container, so on a night when Plex has an update, the backup still restarts it.
+
+## Tdarr (TV library, audio leveling added 2026-11-20)
+- `tdarr` container, web UI and API on :8265. Libraries: Movies (`/mnt/media/movies`) and TV Shows (`/mnt/media/series`, id `libTV`), both on the flow `plexFriendly1080p`. Transcodes run only 01:00–09:00, one GPU worker, about 1,400 files a night.
+- 2026-11-20 the TV queue held 13,401 files (Pokémon, The Simpsons, Survivor, ...), so about 9 nights of work. Queue order is unsorted; the `bumped` flag on a file moves it to the front.
+- Bob's Burgers volume: measured 2026-11-20, 312 episodes from −29.3 to −19.4 LUFS (season 7 about −29, stereo AAC in S10–S12 about −20). The flow now starts with `bob_*` nodes: a Bob's Burgers file whose first audio track lacks the `LOUDNORM=-24` tag gets that track leveled (`loudnorm=I=-24:TP=-2:LRA=11`, EAC3 640k, 48 kHz), video and subtitles copied, a 60–160% size check, then replace. Each episode takes about 3 minutes.
+- The 108 episodes more than 1.5 dB from −24 were queued and bumped. A check was scheduled for 2026-11-21 09:20 Pacific; the first night didn't reach them. The other 204 are within 1.5 dB and were left alone.
+- Files: `/mnt/tdarr_cache/appdata/tdarr/flow-backups/` holds the flow from before the change (restore it to undo), `queued.txt` (the 108) and `bob-loudness.tsv` (all measurements).
+- Tdarr API: `POST /api/v2/cruddb` with `{"data":{"collection":"FlowsJSONDB"|"FileJSONDB"|"LibrarySettingsJSONDB","mode":"getById"|"getAll"|"update",...}}`. A `getAll` on FileJSONDB is slow (26k files); run it in the background.
