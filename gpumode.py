@@ -105,3 +105,26 @@ def keep_alive(path=None):
     """keep_alive to send with local ollama calls: the recorded one in `online`, else None."""
     st = read_state(path)
     return (st.get("keep_alive") or None) if st.get("mode") == "online" else None
+
+
+# ── Offline hook (GPU modes 3/3): suggest, never switch ──────────────────────
+HINTS = {
+    "offline": ("Claude is unreachable. Loyd's bigger local model can take the shared GPU while "
+                "vision is idle or at night: /gpu offline (dry run first, asks before applying)."),
+    "online": ("Claude is reachable again and the shared GPU is still in offline mode. "
+               "Give it back to vision: /gpu online (dry run first, asks before applying)."),
+}
+
+
+def suggestion(online, state=None):
+    """Which mode to suggest for the cloud link's state: "offline", "online" or None.
+    Only when the gpu_mode tool is configured, and only when the recorded mode
+    (LOYD_GPU_MODE_STATE; none recorded counts as online) doesn't match. Never acts."""
+    if not config_path():
+        return None
+    mode = (read_state() if state is None else state).get("mode") or "online"
+    if not online and mode != "offline":
+        return "offline"
+    if online and mode == "offline":
+        return "online"
+    return None

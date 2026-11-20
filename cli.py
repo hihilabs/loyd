@@ -37,6 +37,7 @@ from claude_backend import ClaudeAgent, ClaudeUnavailable, DEFAULT_MODEL, online
 from tools import TOOL_SCHEMAS, execute_tool, WRITE_TOOLS, where, mode, is_destructive, needs_confirm  # noqa: E402
 import audit                                       # noqa: E402
 import brain                                       # noqa: E402
+import gpumode                                     # noqa: E402
 import loydtrace as _trace                             # noqa: E402
 
 try:
@@ -109,6 +110,7 @@ class Session:
             confirm=confirm_write, write_tools=WRITE_TOOLS, should_confirm=should_confirm)
         self._claude = None
         self.last_trace = None
+        self._gpu_hinted = None          # last gpu_mode suggestion shown (gpu_hint)
 
     def _traced(self, agent, brain, model, q):
         """Run agent on q, recording a trace when LOYD_TRACE_DIR is set."""
@@ -125,6 +127,15 @@ class Session:
             agent.on_event = self.printer
             if t.written:
                 self.last_trace = t.rec["id"]
+
+    def gpu_hint(self, online):
+        """Print a one-time gpu_mode suggestion when the cloud link's state and the
+        recorded GPU mode disagree (gpumode.suggestion). Never switches anything;
+        the same suggestion isn't repeated until the situation changes."""
+        s = gpumode.suggestion(online)
+        if s and s != self._gpu_hinted:
+            print(f"{YEL}⚡ {gpumode.HINTS[s]}{RST}", file=sys.stderr)
+        self._gpu_hinted = s
 
     def claude(self):
         if self._claude is None:
@@ -189,7 +200,10 @@ class Session:
         except ClaudeUnavailable as e:
             print(f"{DIM}↓ cloud unavailable ({e}) — falling back to {self.agent.model}{RST}",
                   file=sys.stderr)
+            self.gpu_hint(False)
             self.ask_local(q)
+            return
+        self.gpu_hint(True)
 
 
 def self_update():
@@ -220,6 +234,27 @@ def self_update():
     os.execv(sys.executable, [sys.executable, os.path.join(home, "cli.py"), *sys.argv[1:]])
 
 
+def gpu_command(mode):
+    """/gpu: status, or a dry run of online/offline and then the operator's y/N
+    before applying. The only way the CLI switches GPU modes: by a person."""
+    mode = mode.strip().lower()
+    if not gpumode.config_path():
+        print(f"{DIM}gpu_mode is not configured (LOYD_GPU_MODE_CONFIG){RST}")
+        return
+    if mode not in gpumode.MODES:
+        print(f"{DIM}usage: /gpu [status|online|offline]{RST}")
+        return
+    out = run_tool("gpu_mode", {"mode": mode})
+    print(out)
+    if mode == "status" or audit.outcome_of(out) != "ok":
+        return
+    args = {"mode": mode, "apply": True}
+    if not confirm_write("gpu_mode", args):
+        print(f"{DIM}left as is{RST}")
+        return
+    print(run_tool("gpu_mode", args))
+
+
 def handle_slash(q, sess):
     """Dispatch a /command in the REPL. Returns 'exit' to quit, else None."""
     cmd, _, rest = q.partition(" ")
@@ -232,6 +267,7 @@ def handle_slash(q, sess):
               f"/audit [n]    show the last n tool calls from the audit log\n"
               f"/good, /bad   rate the last answer (traces: LOYD_TRACE_DIR)\n"
               f"/tools        list callable tools\n"
+              f"/gpu [status|online|offline]  GPU mode: dry run, then y/N to apply\n"
               f"/exit         quit{RST}")
     elif cmd == "/tools":
         for s in TOOL_SCHEMAS:
@@ -274,6 +310,8 @@ def handle_slash(q, sess):
             args = ", ".join(f"{k}={v!r}" for k, v in (r.get("args") or {}).items())
             print(f"{DIM}{r.get('ts')} {r.get('actor')}{RST} {CYAN}{r.get('tool')}{RST}"
                   f"({args[:120]}) {col}{r.get('outcome')}{RST}")
+    elif cmd == "/gpu":
+        gpu_command(rest or "status")
     elif cmd in ("/exit", "/quit", "/q"):
         return "exit"
     else:
@@ -303,6 +341,8 @@ def main():
           f"acts={where()} · mode={mtag} · brain={brain.policy()[0]} · "
           f"{len(TOOL_SCHEMAS)} tools ({len(WRITE_TOOLS)} write, confirm-gated) · {key}{RST}",
           file=sys.stderr)
+    if os.getenv("ANTHROPIC_API_KEY"):
+        sess.gpu_hint(online)
 
     if args.question:
         q = " ".join(args.question)

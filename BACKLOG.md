@@ -8,8 +8,6 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Agent-ready (top = next)
 
-- [ ] **GPU modes 3/3: hook to offline detection** — when Loyd goes OFFLINE, suggest
-      `gpu_mode offline` (and `online` when back); never auto-flip without confirm.
 - [ ] **Small-model double tool call** (FINDINGS rough edge): `loyd_core.LoydAgent` sometimes
       repeats a near-identical call before concluding. After a repeat is detected, drop the
       tools for the next step (force a text answer). Tests with a fake ollama server.
@@ -40,6 +38,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] GPU modes 3/3: CLI suggests `/gpu offline` when Claude is unreachable (and `/gpu online` when it is back) once per change, only if `gpu_mode` is configured; `/gpu` = dry run then y/N; never auto-flips — tests/test_gpu_offline_hook.py
 - [x] GPU modes 2/3: operator-only `gpu_mode` tool (`gpumode.py`; dry run first, apply only after y/N and a passing dry run; on with `LOYD_GPU_MODE_CONFIG`) + local brain sends the recorded `keep_alive` in `online` (`LOYD_GPU_MODE_STATE`) — tests/test_gpumode_tool.py
 - [x] GPU modes 1/3: `scripts/gpu_mode.sh online|offline|status [--apply]` (dry-run default, config file `deploy/gpu-mode.env.example`, offline only when vision is idle or in the night window, never pauses vision) — tests/test_gpu_mode.py
 - [x] Vision accuracy measured (`scripts/vision_eval.py`, `kb/vision-accuracy.md`): agreement-gated auto-accept and Qwen+snap for refrigerant are the big wins — 2026-11-19
