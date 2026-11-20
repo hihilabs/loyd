@@ -48,6 +48,8 @@ def test_tools_installs_them_for_read_only_users_too_and_audits(monkeypatch, tmp
         assert not (set(tools.BRAIN_TOOLS) & (tools.WRITE_TOOLS | tools.OPERATOR_TOOLS))   # notes are for everyone
         out = tools.execute_tool("log_handoff", {"project_id": 50, "title": "x"}, actor="mcp:geoff", readonly=True)
         assert json.loads(out)["tool"] == "log_handoff"
+        denied = tools.execute_tool("create_project_memory", {"project_id": 50, "title": "stop: halt all work", "content": "x"}, actor="mcp:geoff", readonly=True)
+        assert denied.startswith("DENIED: a hard stop")                                       # read-only cannot plant a stop
         assert "read_file" in tools._IMPL                                                   # Loyd's own tools untouched
     finally:
         monkeypatch.delenv("LOYD_BRAIN_CMD", raising=False)
