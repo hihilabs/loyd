@@ -536,6 +536,11 @@ def _run_kit_command(line: str, timeout: int) -> str:
 import kb as _kb                                      # noqa: E402
 TOOL_SCHEMAS.extend(_kb.TOOL_SCHEMAS)                 # read-only notes search, local to Loyd
 _IMPL.update(_kb.IMPL)
+
+import hihibrain as _hihibrain                        # noqa: E402
+# hihilabs' own brain tools (project_brief, create_project_memory, log_handoff …),
+# passed through its brain door when LOYD_BRAIN_CMD is set; none otherwise.
+BRAIN_TOOLS = _hihibrain.install(TOOL_SCHEMAS, _IMPL)
 import kits as _kits                                  # noqa: E402
 import auditkit as _auditkit                          # noqa: E402
 _SELECTED_KITS = _kits.selected()

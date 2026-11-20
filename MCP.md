@@ -220,3 +220,46 @@ scheduled restart and a health check that rolls back automatically. See
 - **Not yet tested** (needs your devices): each client's connect flow (claude.ai web,
   mobile, Desktop) against the live `loyd.hihilabs.xyz` door. Do a dry run per client,
   ideally ticking *Read-only* first.
+
+
+## hihilabs brain tools (all roads go through hihi)
+
+With `LOYD_BRAIN_CMD` set, the connector also offers hihilabs' own brain tools, passed
+through unchanged (`hihibrain.py`): `project_brief`, `create_project_memory`,
+`create_project_note`, `list_projects`, `get_project`, `task_brief`, `log_handoff`,
+`list_open_gaps`, `search_history`. A claude.ai session can then read a project's memory
+before it starts and leave its decisions and a handoff when it stops, the same as a VS Code
+session does. The tool list and schemas come from hihilabs at start-up; nothing is redefined
+here. Read-only tokens get them too: leaving a note is the point.
+
+On the VPS, beside hihilabs (add to `/etc/loyd/tokyo7.env`, then restart the service):
+
+```bash
+LOYD_BRAIN_CMD="/usr/sbin/runuser -u hihilabs.xyz -- /bin/bash /var/www/vhosts/hihilabs.xyz/app/scripts/brain_door.sh"
+```
+
+From any other machine, through the brain key:
+
+```bash
+LOYD_BRAIN_CMD="ssh -F /dev/null -i ~/.ssh/hihilabs_brain -o IdentitiesOnly=yes -o BatchMode=yes root@<vps public ip> mcp"
+```
+
+Unset, there are no brain tools and nothing else changes. Each call starts the door, makes
+one call and ends (about 2.5 s, a Django boot); `LOYD_BRAIN_TIMEOUT` caps it (default 60 s).
+
+### What to paste into claude.ai (Settings → Your Claude → instructions)
+
+claude.ai does not load `~/.claude/CLAUDE.md` and has no hooks, so the standing rules have
+to be stated there once:
+
+> You work with Andrew on HiHi Labs through the **Loyd** connector. hihilabs is the one brain:
+> before working on a project, call `list_projects` to find its id, then `project_brief` for
+> its memory and hard stops. If the work touches a hard stop, stop and say so. When a decision,
+> a plan or a gotcha comes out of the conversation, save it with `create_project_memory`
+> (same title updates it) before you finish, and leave `log_handoff` saying what was done, where
+> it stands and what is next. A plan that lives only in this chat is lost. Standing rules:
+> allowances only (subscriptions, free tiers, local models; never a metered API); every change
+> to a production server, and every restart, needs Andrew's explicit yes first, one at a time;
+> never print a secret, token or key into the chat; hihilabs' own code is changed only from an
+> editor session, never through its in-app tools. Lead with the outcome in plain words; keep
+> detail for when it is asked for.

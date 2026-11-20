@@ -38,6 +38,7 @@ If an item turns out bigger than one PR, split it here and do the first piece.
 
 ## Done
 
+- [x] hihilabs brain tools on the connector (`hihibrain.py`, `LOYD_BRAIN_CMD`): the nine brain tools passed through hihilabs' own door, so claude.ai sessions can read briefs and leave memories and handoffs — tests; **needs on panel:** pull to main, add `LOYD_BRAIN_CMD` to `/etc/loyd/tokyo7.env`, restart `loyd-mcp-tokyo7`
 - [x] GPU modes 3/3: CLI suggests `/gpu offline` when Claude is unreachable (and `/gpu online` when it is back) once per change, only if `gpu_mode` is configured; `/gpu` = dry run then y/N; never auto-flips — tests/test_gpu_offline_hook.py
 - [x] GPU modes 2/3: operator-only `gpu_mode` tool (`gpumode.py`; dry run first, apply only after y/N and a passing dry run; on with `LOYD_GPU_MODE_CONFIG`) + local brain sends the recorded `keep_alive` in `online` (`LOYD_GPU_MODE_STATE`) — tests/test_gpumode_tool.py
 - [x] GPU modes 1/3: `scripts/gpu_mode.sh online|offline|status [--apply]` (dry-run default, config file `deploy/gpu-mode.env.example`, offline only when vision is idle or in the night window, never pauses vision) — tests/test_gpu_mode.py
