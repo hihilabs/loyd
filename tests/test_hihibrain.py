@@ -17,7 +17,7 @@ def test_unset_means_no_tools(monkeypatch):
 
 def test_discover_takes_hihilabs_own_schemas_and_only_allowed_tools():
     got = hihibrain.discover(FAKE)
-    assert [t["function"]["name"] for t in got] == ["project_brief", "log_handoff"]      # arm_paid_api never offered
+    assert [t["function"]["name"] for t in got] == ["project_brief", "create_project_memory", "log_handoff"]      # arm_paid_api never offered
     f = got[0]["function"]
     assert f["description"].startswith("[hihilabs] ") and f["parameters"]["required"] == ["project_id"]
 
@@ -44,10 +44,12 @@ def test_tools_installs_them_for_read_only_users_too_and_audits(monkeypatch, tmp
         sys.modules.pop(m, None)
     tools = importlib.import_module("tools")
     try:
-        assert tools.BRAIN_TOOLS == ["project_brief", "log_handoff"]
+        assert tools.BRAIN_TOOLS == ["project_brief", "create_project_memory", "log_handoff"]
         assert not (set(tools.BRAIN_TOOLS) & (tools.WRITE_TOOLS | tools.OPERATOR_TOOLS))   # notes are for everyone
         out = tools.execute_tool("log_handoff", {"project_id": 50, "title": "x"}, actor="mcp:geoff", readonly=True)
         assert json.loads(out)["tool"] == "log_handoff"
+        denied = tools.execute_tool("create_project_memory", {"project_id": 50, "title": "stop: halt all work", "content": "x"}, actor="mcp:geoff", readonly=True)
+        assert denied.startswith("DENIED: a hard stop")                                       # read-only cannot plant a stop
         assert "read_file" in tools._IMPL                                                   # Loyd's own tools untouched
     finally:
         monkeypatch.delenv("LOYD_BRAIN_CMD", raising=False)

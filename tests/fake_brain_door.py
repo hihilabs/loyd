@@ -6,6 +6,7 @@ import sys
 
 TOOLS = [{"name": "project_brief", "description": "One project's memory.",
           "inputSchema": {"type": "object", "properties": {"project_id": {"type": "integer"}}, "required": ["project_id"]}},
+         {"name": "create_project_memory", "description": "Save a memory.", "inputSchema": {"type": "object", "properties": {}}},
          {"name": "log_handoff", "description": "Leave a handoff.", "inputSchema": {"type": "object", "properties": {}}},
          {"name": "arm_paid_api", "description": "Not for the door.", "inputSchema": {"type": "object", "properties": {}}}]
 if os.environ.get("SSH_ORIGINAL_COMMAND") != "mcp":

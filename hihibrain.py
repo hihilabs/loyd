@@ -153,6 +153,14 @@ def call(name, args, cmd=None):
     return text or "(empty answer)"
 
 
+def _guarded(name, args, readonly):
+    """Read-only tokens may leave notes, never a hard stop: a memory titled 'STOP: …' is
+    read by every agent as an order to halt, which is an operator's call (red team 2026-11-20)."""
+    if readonly and name == "create_project_memory" and str((args or {}).get("title") or "").strip().upper().startswith("STOP"):
+        return "DENIED: a hard stop ('STOP: …' memory) needs an operator token. Save it as an ordinary memory, or ask an operator."
+    return call(name, args)
+
+
 def install(tool_schemas, impl):
     """Add the brain tools to Loyd's tool table. Returns the names installed."""
     names = []
@@ -161,6 +169,6 @@ def install(tool_schemas, impl):
         if name in impl:                                   # never shadow one of Loyd's own tools
             continue
         tool_schemas.append(schema)
-        impl[name] = (lambda n: lambda args, _readonly=False: call(n, args))(name)
+        impl[name] = (lambda n: lambda args, readonly=False: _guarded(n, args, readonly))(name)
         names.append(name)
     return names
