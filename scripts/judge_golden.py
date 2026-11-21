@@ -11,7 +11,8 @@ later answer comes back calibrated.
 
 Decision bands follow the TypeSafe guidance: yes >= 0.7, no <= 0.3, the middle
 is "ask a person". Re-run after relabeling or rewording; it only asks the model
-about photos that have no judgment yet for the current question version.
+about photos that have no judgment yet for the current question version, so
+the nightly run (cron, 04:00) just picks up new golden labels and refits.
 """
 import argparse
 import glob
@@ -19,11 +20,20 @@ import hashlib
 import os
 import sqlite3
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import judge  # noqa: E402
 
 Q = "camagent.is_nameplate"
+
+
+def _busy(cdb):
+    try:
+        with sqlite3.connect(f"file:{cdb}?mode=ro", uri=True) as c:
+            return c.execute("SELECT count(*) FROM jobs WHERE status='running'").fetchone()[0] > 0
+    except sqlite3.Error:
+        return True
 
 
 def _auc(pairs):
@@ -46,6 +56,8 @@ def main():
     ap.add_argument("--photos", required=True)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--holdout", type=float, default=0.3)
+    ap.add_argument("--busy-gap", type=float, default=30.0,
+                    help="seconds between photos while camagent has a running job (shared GPU)")
     a = ap.parse_args()
 
     c = sqlite3.connect(f"file:{a.camagent_db}?mode=ro", uri=True)
@@ -65,6 +77,8 @@ def main():
         key = judge.state_key(images=[hit[0]])
         label = "yes" if status == "confirmed" else "no"
         if key not in done:
+            if _busy(a.camagent_db):
+                time.sleep(a.busy_gap)          # camagent's workers share this GPU: trickle
             try:
                 judge.noul(Q, images=[hit[0]])
                 asked += 1
