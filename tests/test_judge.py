@@ -71,3 +71,16 @@ def test_platt_recovers_a_known_map(judge):
         pairs.append((p, 1 if random.random() < true else 0))
     a, b = judge.fit_platt(pairs)
     assert a == pytest.approx(0.5, abs=0.1) and b == pytest.approx(-0.3, abs=0.1)
+
+
+def test_failed_call_is_judge_error(judge, monkeypatch):
+    import urllib.error
+    calls = []
+
+    def boom(req, timeout=None):
+        calls.append(1)
+        raise urllib.error.HTTPError(req.full_url, 500, "runner died", {}, None)
+    monkeypatch.setattr(judge.urllib.request, "urlopen", boom)
+    with pytest.raises(judge.JudgeError):
+        judge._post("http://x", {"model": "m"}, retries=1, pause=0)
+    assert len(calls) == 2          # one retry, then give up

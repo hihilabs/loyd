@@ -73,11 +73,22 @@ class JudgeError(RuntimeError):
 
 # ── the model call ────────────────────────────────────────────────────────────
 
-def _post(url, body):
+def _post(url, body, retries=1, pause=20):
+    """One Ollama call. A failure (HTTP 500 when the runner was just killed and is
+    reloading, a timeout, a refused connection) is retried once after a pause,
+    then raised as JudgeError: a failed call is 'no answer', never 'no'."""
+    import time
+    import urllib.error
     req = urllib.request.Request(f"{url}/api/generate", json.dumps(body).encode(),
                                  {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return json.load(r)
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                return json.load(r)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as e:
+            if attempt == retries:
+                raise JudgeError(f"{url} {body.get('model')}: {type(e).__name__}: {e}") from e
+            time.sleep(pause)
 
 
 def _image_b64(img):
